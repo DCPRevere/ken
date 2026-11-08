@@ -1,0 +1,11 @@
+[package]
+name = "ken"
+version = "0.1.0"
+edition = "2021"
+description = "Ken: a knowledge engine that tracks who knows what, and when"
+license = "MIT"
+
+[dependencies]
+
+[profile.release]
+debug = 1

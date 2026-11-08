@@ -1,0 +1,32 @@
+# Cheryl's Birthday. Learning from statements about knowledge.
+
+agent Albert, Bernard, Reader : logician
+agent Cheryl
+type Month = May | June | July | August
+type Day = 14 .. 19
+type Date = (month: Month, day: Day)
+fact birthday: Date in
+  (May, 15), (May, 16), (May, 19), (June, 17), (June, 18),
+  (July, 14), (July, 16), (August, 14), (August, 15), (August, 17)
+
+timeline:
+  start:
+    birthday = (July, 16)
+    seen by: Cheryl
+    seen by: Albert  hiding birthday.day
+    seen by: Bernard hiding birthday.month
+    seen by: Reader  hiding birthday
+  1: announce(Albert, not (Albert knows birthday)
+                      and Albert knows not (Bernard knows birthday))
+  2: announce(Bernard, Bernard knows birthday)
+  3: announce(Albert, Albert knows birthday)
+
+expect at start:
+  not (Albert knows birthday)
+  not (Reader knows birthday)
+expect at 2:
+  Bernard knows birthday
+  not (Reader knows birthday)
+expect at 3:
+  Albert knows birthday
+  Reader knows birthday = (July, 16)

@@ -1,0 +1,41 @@
+# Blue Eyes without the guru: nobody ever leaves, because "someone has blue eyes"
+# never becomes common knowledge, even though everyone already knows it.
+
+given n = 5, b = 3
+
+given n = 5, b = 3
+
+agent Islander[1..n] : logician
+agent Guru
+type Colour = blue | brown
+fact eyes(Islander): Colour
+fact gone(Islander): bool = false
+
+action leave(i: Islander)
+  needs:   not gone(i)
+  effect:  gone(i) = true
+  seen by: everyone
+
+action night(k: Int)
+  seen by: everyone
+
+rule leaving:
+  after night(k), for every Islander i:
+    when i knows eyes(i) and not gone(i):
+      do leave(i)
+
+timeline:
+  start:
+    eyes(i) = blue  for i in 1 .. b
+    eyes(i) = brown for i in b+1 .. n
+    seen by: Guru
+    seen by: every Islander i hiding eyes(i)
+  night(k) for k in 1 .. 20
+
+expect throughout start .. end:
+  all i in Islander: not gone(i)
+  not common knowledge among Islander: some i in Islander: eyes(i) = blue
+  all i in Islander: not (i knows eyes(i))
+expect at end:
+  b >= 2 => all j in Islander: j knows (some i in Islander: eyes(i) = blue)
+  b >= 3 => all j in Islander: j knows (all k in Islander: k knows (some i in Islander: eyes(i) = blue))

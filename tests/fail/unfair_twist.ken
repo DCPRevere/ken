@@ -1,0 +1,22 @@
+# expect-error: expected `possible for Reader: good(B)`
+# A mishears B and "hears" a confession. The narrator relays A's view, so the
+# reader's information rules out the truth: the later twist would be a cheat.
+world Tale
+  agent A, B
+  fact good(Agent): bool = true
+  action confess(x: Agent)
+    needs:   not good(x)
+    seen by: x
+  action sigh(x: Agent)
+    seen by: x
+  timeline:
+    e1: sigh(B)
+          seen by: B
+          seen by: A as confess(B)
+world Reading about Tale
+  agent Narrator sees all of Tale
+  agent Reader
+  timeline:
+    ch1: tell(Narrator, Reader, e1 as seen by A)
+  expect at ch1:
+    possible for Reader: good(B)

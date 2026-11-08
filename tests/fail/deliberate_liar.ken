@@ -1,0 +1,15 @@
+# expect-ok
+# A dishonest agent may lie; the listener is deceived, and the checker knows it.
+agent Iago, Othello
+fact affair: bool
+timeline:
+  start:
+    affair = false
+    honest(Iago) = false
+    seen by: Iago
+  1: tell(Iago, Othello, affair)
+expect at 1:
+  Othello believes affair
+  not (Othello knows affair)
+  Iago knows not affair
+  Iago knows (Othello believes affair)

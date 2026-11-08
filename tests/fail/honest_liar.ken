@@ -1,0 +1,9 @@
+# expect-error: needs `honest(x) => x believes content`, which is false
+agent Sally, Anne
+type Place = basket | box
+fact marble: Place
+timeline:
+  start:
+    marble = basket
+    seen by: Sally
+  1: tell(Sally, Anne, marble = box)       # Sally is honest but says what she doesn't believe

@@ -1,0 +1,23 @@
+# expect-ok
+# A fixed loop whose knowledge has a real origin: Ada reads the code at e5.
+time travel: fixed
+agent Ada, Ben
+agent Ada#2 is Ada#1 at e9
+type Digit = 0 .. 9
+fact code: Digit
+action arrive(x: Agent)
+  seen by: x
+action read_code(x: Agent, c: Digit)
+  needs:   c = code
+  seen by: x
+action enter_box(x: Agent)
+  seen by: x
+timeline:
+  start:
+    code = 7
+  e1: arrive(Ada#2)
+  e2: tell(Ada#2, Ben, code = 7)
+  e5: read_code(Ada#1, 7)
+  e9: enter_box(Ada#1)
+expect at e2:
+  Ben believes code = 7

@@ -1,0 +1,18 @@
+# expect-error: put(Sally, box) needs `present(who)`, which is false here
+agent Sally, Anne
+type Place = basket | box
+fact marble: Place
+fact present(Agent): bool = true
+action put(who: Agent, to: Place)
+  needs:   present(who)
+  effect:  marble = to
+  seen by: every a where present(a)
+action leave(who: Agent)
+  effect:  present(who) = false
+  seen by: every a where present(a)
+timeline:
+  start:
+    marble = basket
+    seen by: Sally, Anne
+  1: leave(Sally)
+  2: put(Sally, box)                       # plot hole: Sally isn't there

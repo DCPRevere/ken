@@ -1,0 +1,8 @@
+# expect-error: D tells about e1, but never saw or heard of it
+agent A, B, D
+action wave(x: Agent)
+  seen by: x
+timeline:
+  1: wave(B)
+  e1: wave(A)
+  e2: tell(D, B, e1)

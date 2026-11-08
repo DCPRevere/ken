@@ -1,0 +1,43 @@
+# expect-ok
+# Blue Eyes, stated exactly for any n and b >= 1. Run at large n by the tests.
+given n = 6, b = 3
+agent Islander[1..n] : logician
+agent Guru
+type Colour = blue | brown
+fact eyes(Islander): Colour
+fact gone(Islander): bool = false
+action leave(i: Islander)
+  needs:   not gone(i)
+  effect:  gone(i) = true
+  seen by: everyone
+action night(k: Int)
+  seen by: everyone
+rule leaving:
+  after night(k), for every Islander i:
+    when i knows eyes(i) and not gone(i):
+      do leave(i)
+timeline:
+  start:
+    eyes(i) = blue  for i in 1 .. b
+    eyes(i) = brown for i in b+1 .. n
+    seen by: Guru
+    seen by: every Islander i hiding eyes(i)
+  speech: announce(Guru, some i in Islander: eyes(i) = blue)
+  night(k) for k in 1 .. b+1
+expect at start:
+  not common knowledge among Islander: some i in Islander: eyes(i) = blue
+  b >= 2 => all j in Islander: j knows (some i in Islander: eyes(i) = blue)
+  all i in Islander: not (i knows eyes(i))
+expect at speech:
+  common knowledge among Islander: some i in Islander: eyes(i) = blue
+  b = 1 => (Islander[1] knows eyes(Islander[1]))
+  b >= 2 => all i in Islander: not (i knows eyes(i))
+expect before night(b):
+  all i in Islander: not gone(i)
+  all i in Islander: (i knows eyes(i)) <=> eyes(i) = blue   # worked out when nobody left
+expect at night(b):
+  all i in Islander: gone(i) <=> eyes(i) = blue
+  all i in Islander: i knows eyes(i)
+  common knowledge among Islander: all i in Islander: gone(i) <=> eyes(i) = blue
+expect at night(b+1):
+  all i in Islander: gone(i)

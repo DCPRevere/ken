@@ -1,0 +1,27 @@
+# expect-error: expected `some i in Islander: gone(i)`, but it is false
+given n = 4, b = 3
+agent Islander[1..n] : logician
+agent Guru
+type Colour = blue | brown
+fact eyes(Islander): Colour
+fact gone(Islander): bool = false
+action leave(i: Islander)
+  needs:   not gone(i)
+  effect:  gone(i) = true
+  seen by: everyone
+action night(k: Int)
+  seen by: everyone
+rule leaving:
+  after night(k), for every Islander i:
+    when i knows eyes(i) and not gone(i):
+      do leave(i)
+timeline:
+  start:
+    eyes(i) = blue  for i in 1 .. b
+    eyes(i) = brown for i in b+1 .. n
+    seen by: Guru
+    seen by: every Islander i hiding eyes(i)
+  speech: announce(Guru, some i in Islander: eyes(i) = blue)
+  night(k) for k in 1 .. b
+expect at night(2):
+  some i in Islander: gone(i)              # wrong: nobody can know yet

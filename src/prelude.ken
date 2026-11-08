@@ -1,0 +1,11 @@
+# Built into every world.
+
+fact honest(Agent): bool = true
+
+action tell(x: Agent, y: Agent, content)
+  needs:   honest(x) => x believes content
+  seen by: x, y
+
+action announce(x: Agent, content)
+  needs:   x knows content
+  seen by: everyone

@@ -1,0 +1,9 @@
+# expect-error: A concludes `sad(B)` because of e1, but never saw or heard of e1
+agent A, B
+fact sad(Agent): bool = false
+action cry(x: Agent)
+  effect:  sad(x) = true
+  seen by: x
+timeline:
+  e1: cry(B)
+        A concludes sad(B) because e1

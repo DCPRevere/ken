@@ -1,0 +1,34 @@
+# expect-error: this happens because `A believes plotting(B)`, but that isn
+# The Defender: A misreads a killing, and the reader is misled with them.
+
+world Tale
+  agent A, B, C, D
+  fact good(Agent): bool
+  fact plotting(Agent): bool = false
+  fact alive(Agent): bool = true
+
+  action attack(x: Agent, y: Agent)
+    seen by: x, y
+  action kill(x: Agent, y: Agent)
+    effect:  alive(y) = false
+    seen by: x, y
+  action sneak_out(x: Agent)
+    seen by: x
+  action refuse_help(x: Agent, y: Agent)
+    seen by: x, y
+
+  timeline:
+    start:
+      good(B) = true
+    e1: attack(C, D) then kill(B, C)
+          seen by: B, C, D
+          seen by: A as kill(B, C)
+          A concludes not good(B) because e1
+    e2: sneak_out(B)                     # B is really guarding D
+          seen by: B, A secretly
+          A concludes plotting(B) because e2 and not good(B)
+    e3x: sneak_out(C)
+    e4: tell(D, A, e1)                   # D gives A the full view of e1
+          A concludes good(B) because e1
+    e5: refuse_help(A, B) because A believes plotting(B)
+

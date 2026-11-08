@@ -1,0 +1,33 @@
+# Sally–Anne: the classic false-belief test.
+
+agent Sally, Anne
+type Place = basket | box
+fact marble: Place
+fact present(Agent): bool = true
+
+action put(who: Agent, to: Place)
+  needs:   present(who)
+  effect:  marble = to
+  seen by: every a where present(a)
+
+action leave(who: Agent)
+  effect:  present(who) = false
+  seen by: every a where present(a)
+
+action enter(who: Agent)
+  effect:  present(who) = true
+  seen by: who, every a where present(a)
+
+timeline:
+  start:
+    marble = basket
+    seen by: Sally, Anne
+  1: leave(Sally)
+  2: put(Anne, box)          # Sally is absent, so she doesn't see this
+  3: enter(Sally)
+
+expect at 3:
+  Sally believes marble = basket
+  not (Sally knows marble = basket)
+  Anne knows marble = box
+  Anne knows (Sally believes marble = basket)

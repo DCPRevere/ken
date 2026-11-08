@@ -1,0 +1,40 @@
+# expect-ok
+# Exact behaviour on every night, plus knowledge facts. Used to compare engines.
+given n = 5, b = 3
+agent Islander[1..n] : logician
+agent Guru
+type Colour = blue | brown
+fact eyes(Islander): Colour
+fact gone(Islander): bool = false
+action leave(i: Islander)
+  needs:   not gone(i)
+  effect:  gone(i) = true
+  seen by: everyone
+action night(k: Int)
+  seen by: everyone
+rule leaving:
+  after night(k), for every Islander i:
+    when i knows eyes(i) and not gone(i):
+      do leave(i)
+timeline:
+  start:
+    eyes(i) = blue  for i in 1 .. b
+    eyes(i) = brown for i in b+1 .. n
+    seen by: Guru
+    seen by: every Islander i hiding eyes(i)
+  speech: announce(Guru, some i in Islander: eyes(i) = blue)
+  night(k) for k in 1 .. n+2
+expect at speech:
+  common knowledge among Islander: some i in Islander: eyes(i) = blue
+  all i in Islander: not (i knows whether eyes(i) = blue)
+  Guru knows (all i in Islander: eyes(i) = blue <=> i = i and eyes(i) = blue)
+expect at night(1):
+  all i in Islander: gone(i) <=> (eyes(i) = blue and b <= 1)
+  b >= 2 => all i in Islander: not (i knows eyes(i))
+expect at night(2):
+  all i in Islander: gone(i) <=> ((eyes(i) = blue and b <= 2) or (eyes(i) = brown and b <= 1))
+expect at night(3):
+  all i in Islander: gone(i) <=> ((eyes(i) = blue and b <= 3) or (eyes(i) = brown and b <= 2))
+expect at end:
+  all i in Islander: gone(i)
+  all i in Islander: (possible for i: eyes(i) = blue) <=> eyes(i) = blue

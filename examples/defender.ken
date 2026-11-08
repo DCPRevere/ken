@@ -1,0 +1,58 @@
+# The Defender: A misreads a killing, and the reader is misled with them.
+
+world Tale
+  agent A, B, C, D
+  fact good(Agent): bool
+  fact plotting(Agent): bool = false
+  fact alive(Agent): bool = true
+
+  action attack(x: Agent, y: Agent)
+    seen by: x, y
+  action kill(x: Agent, y: Agent)
+    effect:  alive(y) = false
+    seen by: x, y
+  action sneak_out(x: Agent)
+    seen by: x
+  action refuse_help(x: Agent, y: Agent)
+    seen by: x, y
+
+  timeline:
+    start:
+      good(B) = true
+    e1: attack(C, D) then kill(B, C)
+          seen by: B, C, D
+          seen by: A as kill(B, C)
+          A concludes not good(B) because e1
+    e2: sneak_out(B)                     # B is really guarding D
+          seen by: B, A secretly
+          A concludes plotting(B) because e2 and not good(B)
+    e3: refuse_help(A, B) because A believes plotting(B)
+    e4: tell(D, A, e1)                   # D gives A the full view of e1
+          A concludes good(B) because e1
+
+  expect at e3:
+    A believes not good(B)
+    A believes plotting(B)
+    not (B knows (A believes plotting(B)))
+  expect at e4:
+    A knows good(B)
+    not (A believes plotting(B))
+
+world Reading about Tale
+  agent Narrator sees all of Tale
+  agent Reader
+
+  timeline:
+    ch1: tell(Narrator, Reader, e1 as seen by A)
+           Reader concludes not good(B) because e1
+    ch3: tell(Narrator, Reader, e2)
+    ch4: tell(Narrator, Reader, e3)
+    ch7: tell(Narrator, Reader, e4)
+           Reader concludes good(B) because e1
+
+  expect throughout ch1 .. ch4:
+    Reader believes not good(B)          # the misdirection works
+    possible for Reader: good(B)         # and the twist will be fair
+  expect at ch7:
+    Reader knows good(B)
+    (A believes good(B)) at e4

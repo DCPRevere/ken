@@ -1,0 +1,48 @@
+# The Box: a Primer-style loop. History is overwritten.
+
+time travel: overwrite
+
+world Loop1
+  agent Ada, Ben
+  type Horse = Swift | Slow
+  fact winner: Horse
+  fact rich(Agent): bool = false
+
+  action race(h: Horse)                  # h is the winner
+    needs:   h = winner
+    seen by: everyone
+  action bet(x: Agent, h: Horse)
+    effect:  rich(x) = (h = winner)
+    seen by: x
+  action enter_box(x: Agent)
+    seen by: x
+
+  timeline:
+    start:
+      winner = Swift
+      seen by: every a hiding winner         # each modifier applies to one item
+    e1: bet(Ben, Slow)
+    e2: race(Swift)
+    e3: enter_box(Ada)                   # Ada#1's segment leaves Loop1
+
+world Loop2 revises Loop1 from start
+  agent Ada#2 is Loop1.Ada at e3         # she remembers the race
+
+  action arrive(x: Agent)
+    seen by: x
+
+  timeline:
+    a1: arrive(Ada#2)
+    a2: tell(Ada#2, Ben, winner = Swift)  # Ben sees "Ada", not which one
+    a3: bet(Ben, Swift) because Ben believes winner = Swift
+    a4: race(Swift)
+
+  expect at a2:
+    Ada#2 knows winner = Swift
+    not (Ada#1 believes winner = Swift)
+    Ben believes winner = Swift
+  expect throughout start .. end:
+    not (Ada#1 saw Ada#2)
+
+expect at end:                           # the real history: Loop2
+  rich(Ben)

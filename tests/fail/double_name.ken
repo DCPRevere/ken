@@ -1,0 +1,3 @@
+# expect-error: 'blue' is already used
+given blue = 2
+type Colour = blue | brown
