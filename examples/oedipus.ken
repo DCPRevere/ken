@@ -1,0 +1,81 @@
+# Oedipus Rex: the audience knows everything; the king learns it last.
+#
+# Oedipus kills an old man at a crossroads, not knowing it is Laius, his
+# father. He marries Jocasta, not knowing she is his mother. Tiresias tells
+# him the truth and he refuses it. The messenger and the shepherd force it on
+# him, and Jocasta understands a scene before he does.
+
+world Thebes
+  agent Oedipus, Jocasta, Laius, Tiresias, Shepherd, Messenger
+  agent OldMan                           # who Oedipus thinks he killed
+  fact son_of_jocasta: bool              # Oedipus is the child she abandoned
+  fact son_of_polybus: bool              # ...not the King of Corinth's son
+  fact killed(Agent, Agent): bool = false
+  fact married: bool = false
+
+  action kill(x: Agent, y: Agent)
+    effect:  killed(x, y) = true
+    seen by: x, y
+  action raise(x: Agent)                 # brought up at the court of Corinth
+    seen by: x
+  action marry(x: Agent, y: Agent)
+    effect:  married = true
+    seen by: everyone
+
+  timeline:
+    start:
+      son_of_jocasta = true
+      son_of_polybus = false
+      seen by: Shepherd, Tiresias        # the shepherd carried the baby away
+      seen by: Messenger hiding son_of_jocasta   # he took it to Corinth
+      seen by: Oedipus hiding son_of_jocasta hiding son_of_polybus hiding honest(Tiresias)
+      seen by: Jocasta hiding son_of_jocasta hiding son_of_polybus
+      seen by: Laius hiding son_of_jocasta hiding son_of_polybus
+      seen by: OldMan hiding son_of_jocasta hiding son_of_polybus
+    e0: raise(Oedipus)
+          Oedipus concludes son_of_polybus because e0
+    e1: kill(Oedipus, Laius)             # at the place where three roads meet
+          seen by: Laius, Shepherd       # the shepherd escaped
+          seen by: Oedipus as kill(Oedipus, OldMan)
+          seen by: Tiresias secretly     # the prophet sees
+    e2: marry(Oedipus, Jocasta)
+    e3: tell(Tiresias, Oedipus, killed(Oedipus, Laius))
+          Oedipus concludes not honest(Tiresias) because e3   # "a plot of Creon's"
+    e4: tell(Messenger, Oedipus, not son_of_polybus)
+          seen by: Messenger, Oedipus, Jocasta
+          Oedipus concludes not son_of_polybus because e4
+          Jocasta concludes son_of_jocasta because e4         # she understands
+    e5: tell(Shepherd, Oedipus, son_of_jocasta) then tell(Shepherd, Oedipus, e1)
+          Oedipus concludes killed(Oedipus, Laius) because e1
+
+  expect at e1:
+    Oedipus believes not killed(Oedipus, Laius)
+    Shepherd knows killed(Oedipus, Laius)
+  expect at e2:
+    not (Jocasta believes son_of_jocasta)
+    Tiresias knows son_of_jocasta
+  expect at e3:
+    not (Oedipus believes killed(Oedipus, Laius))   # he refuses the prophet
+  expect at e4:
+    Jocasta believes son_of_jocasta
+    not (Oedipus believes son_of_jocasta)           # she knows a scene before he does
+  expect at e5:
+    Oedipus knows son_of_jocasta
+    Oedipus knows killed(Oedipus, Laius)
+
+world Theatre about Thebes
+  agent Narrator sees all of Thebes
+  agent Audience
+
+  timeline:
+    myth: tell(Narrator, Audience, Thebes.start)     # every Athenian knew the story
+    scene1: tell(Narrator, Audience, e3)
+    scene2: tell(Narrator, Audience, e4)
+    scene3: tell(Narrator, Audience, e5)
+
+  expect throughout myth .. scene3:
+    Audience knows son_of_jocasta
+  expect at scene1:
+    (not (Oedipus believes son_of_jocasta)) at e3    # dramatic irony
+  expect at scene3:
+    (Oedipus knows son_of_jocasta) at e5

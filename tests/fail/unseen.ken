@@ -1,0 +1,27 @@
+# expect-ok
+# A logician allows that someone came in while he was out, but not while he was there.
+agent Holmes : logician
+agent Moran, Sally
+fact inside(Agent): bool = false
+fact present: bool = true
+action enter(x: Agent)
+  needs:   not inside(x)
+  effect:  inside(x) = true
+  seen by: x, every h where h = Holmes and present
+  may happen unseen
+action step_out(x: Agent)
+  effect:  present = false
+  seen by: x
+action wait(x: Agent)
+  seen by: x
+timeline:
+  start:
+    seen by: everyone
+  e1: wait(Sally)                # Holmes doesn't see this, but he would have seen anyone enter
+  e2: step_out(Holmes)
+  e3: wait(Sally)
+expect at e1:
+  Holmes knows not inside(Moran)
+expect at e3:
+  not (Holmes knows not inside(Moran))
+  not (Holmes knows inside(Moran))

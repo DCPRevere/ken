@@ -1,0 +1,21 @@
+# space: where people are, and how long it takes to get about.
+#
+#   use space
+#   type Place = mill | inn | farm          # your model provides `Place`
+#   timeline:
+#     start @ 0:
+#       space.at(Ada) = farm
+#       space.distance(farm, mill) = 25      # a road, either way; 0 = no road
+#     e1 @ 30: space.go(Ada, mill)
+#
+# Ken checks that nobody travels faster than the roads allow. Someone's place
+# is pinned at `start` and at each timed event they take part in.
+
+fact at(Agent): Place
+fact distance(Place, Place): Int = 0
+
+# Arriving is seen by those already there; leaving, by those left behind.
+action go(x: Agent, to: Place)
+  needs:   at(x) != to
+  effect:  at(x) = to
+  seen by: x, every a where at(a) = to or at(a) = at(x)

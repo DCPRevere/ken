@@ -1,0 +1,3 @@
+# expect-error: library space needs your model to declare `type Place`
+use space
+agent A

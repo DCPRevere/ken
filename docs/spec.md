@@ -1,4 +1,4 @@
-# Ken — specification v0.6
+# Ken — specification v1.0
 
 Ken describes **worlds** in which **agents** observe **events**, form **beliefs**, and act on them. A checker verifies that what you wrote is consistent and that your `expect` claims hold.
 
@@ -29,6 +29,7 @@ type Day = 14 .. 19
 type Date = (month: Month, day: Day)     # a record
 fact good(Agent): bool                   # can change over time
 fact gone(Islander): bool = false        # with a starting value
+fact captain: Agent in Ada, Ben          # only these values are possible
 given n, blue                            # parameters supplied when checking
 ```
 
@@ -36,6 +37,8 @@ given n, blue                            # parameters supplied when checking
 |---|---|---|
 | `person` | One committed belief per fact, each with a recorded source. Models other minds the same way, to any depth. | Story characters, readers |
 | `logician` | Keeps every possible world consistent with what it has seen. Believes φ when φ holds in all of them. | Puzzles, detectives |
+
+**Who is who.** Roles are agent-valued facts, so mistaken identity is a belief about one: `fact captain: Agent in Capitaine, Dubois`, then `Aubrey believes surgeon = Capitaine` or `Aubrey believes not alive(captain)`. Inside a belief, `captain` means whoever the believer takes the captain to be. Keep the `in` list short: each hidden agent-valued fact multiplies the possibilities.
 
 ---
 
@@ -60,6 +63,20 @@ action put(who: Agent, to: Place)
 | `seen by: A as kill(B, C)` | A different description: partial or mistaken. |
 | `seen by: X hiding content` | The fact that it happened, but not the hidden part. |
 | `seen by: A secretly` | A full view, and other observers don't know A saw. Can be combined with `as` or `hiding`. |
+| `seen by: A secretly except B and C` | As `secretly`, but B and C know A saw, and know A thinks nobody knows. A doesn't know they know. |
+| `seen by: (A, B, C) hiding x` | One view shared by several observers: each gets `hiding x`. |
+
+- Each modifier (`as`, `hiding`, `secretly`) applies to the one observer just before it, or to every name in a bracketed group. Ken warns when `seen by: A, B as …` looks as if it meant both.
+- **Appearances**: an action may have several `seen by` lines. Later lines refine earlier ones for the observers they cover, and a line with `as` says what the action looks like to them, depending on the facts:
+  ```
+  action come_in_sight(x: Agent, s: Ship)
+    effect:  sighted = s
+    seen by: everyone
+    seen by: every a where rigged_as_whaler and a != x as come_in_sight(x, whaler)
+  ```
+  The condition is evaluated in each possible world, so someone unsure whether the ship is disguised is unsure what others saw. The observers in the condition take the appearance at face value: if one of them knows better, leave them out of it.
+- `effect:` may continue on indented lines, one or more assignments per line.
+- **`may happen unseen`** on an action: a logician who doesn't see a step allows that any instance of the action happened then, out of their sight, unless they would have seen it. Persons don't; they revise when surprised instead (section 6).
 
 ---
 
@@ -78,7 +95,7 @@ private rule suspicion:                  # private: not common knowledge
 ```
 
 - `after e` fires when an event happens. `after A sees e` fires when A sees it.
-- Actions a rule triggers become **part of the triggering event**.
+- Actions a rule triggers become **part of the triggering event**. They can trigger further rules, up to 8 rounds.
 
 ---
 
@@ -101,8 +118,15 @@ timeline:
 ```
 
 - `start` fixes every fact: declared starting values plus its own assignments. Its views cover the whole initial state.
+- **Clock times**: `e1 @ 10:` gives an event a time, in whatever unit you like. Times must not run backwards.
+- **Travel** (with `use space`): `space.at(x)` says where someone is and `space.distance(a, b) = n`, set at `start`, is a road (either way; 0 means none). Someone's place is pinned at `start` and at each timed event they take part in; between two pins the time must cover the shortest route.
+- **Motives**: `A wants φ` (from this event on) and `A no longer wants φ`. On an event, `so that φ` says what the actor (the first agent argument of its first action) means to bring about.
+- **Suspicion**: `A suspects φ because e…` records a loose belief. It doesn't change what A believes.
+- **Forgetting**: `A forgets <fact>` makes A unsure of its value again. `A forgets <event>` drops A's memory of the event.
+- **Watching**: `A watches <fact>` (from this event on) and `A no longer watches <fact>`. After every step, A sees the fact's current value, even if A didn't see what changed it. A person who expected another value notices and assumes it changed out of sight. Others don't learn what A saw.
 - **Time points**: `start`, `end`, an event name `e` (meaning just after e), and `before e`.
-- A `because` on an action is checked just before the event. A `because` on a conclusion records the source of the belief.
+- **Reasons for acting**: a `because` on an event is checked just before it, and it must be in the actor's head (the actor is the first agent argument of the first action). A part about the actor's own mind (`A believes …`, `A wants …`, `A suspects …`, `A saw …`) is checked as written. Any other part φ is checked as `A believes φ`. A part about someone else's wants, suspicions or sightings is an error, because Ken can't nest those inside a belief. The reason itself is the author's to give: Ken checks that the actor could hold it, not that it is a good reason.
+- A `because` on a conclusion records the source of the belief. The person must have seen or heard each cited event, by then, and must hold each cited belief. Ken doesn't judge whether the sources are good evidence; that is the character's psychology, and the author's call. A conclusion with no `because` gets a warning.
 
 ---
 
@@ -119,7 +143,19 @@ A person's beliefs have three sources:
 - **Trust**: a person trusts x unless they believe `not honest(x)`.
 - **Other minds**: for each event a person believes happened, they update their model of every agent they believe saw it, using that agent's view. Everyone else's model stays unchanged. This applies recursively.
 - **Retraction**: a concluded belief is retracted when one of its sources changes, either because the agent's view of a source event changes or because a source belief is retracted. Retraction cascades. A conclusion written `… despite <source>` survives changes to that source. This is stubbornness.
-- **New views**: a new view of an event replaces the old one if it contains it, meaning the agent saw more of the same event. Otherwise it is a **conflict** the author must resolve with a conclusion.
+- **New views**: a new view of an event replaces the old one if it contains it, meaning the agent saw more of the same event. Otherwise it is a **conflict** the author must resolve with a conclusion of that agent that rests on the event (`because e1`). The new view then replaces the old.
+- **Revision**: persons revise rather than break.
+  - Seeing an event, or trusting testimony, that contradicts their beliefs about a *changeable* fact: they assume it changed unseen.
+  - Testimony that contradicts their beliefs about an *unchangeable* fact, or that adds nothing, is ignored.
+  - Concluding `not honest(x)` withdraws, retroactively, everything x told them and every conclusion resting on x's tellings.
+  - A conclusion that contradicts earlier testimony sets the newest such testimony aside, and drops only those of their own conclusions that no longer fit.
+  - A conclusion about a changeable fact that their observations rule out is taken as "it has changed".
+  - `A concludes (B believes φ)`: A comes to think B privately believes φ.
+
+- **Revision by recency** (when a person's beliefs clash with something new): their own conclusions and the testimony they accepted are all dropped, then each is kept back, newest first, while everything still fits. At the same step, their own conclusion beats testimony. Ken reports what had to go.
+- **Announcements** are testimony for persons, like `tell`.
+- **Suspicion** `A suspects φ` holds while the suspicion stands and A doesn't believe `not φ`. It lapses when a source event's view changes, or when A comes to believe the opposite.
+- **Forgetting a fact** is a private update: in A's possible worlds the fact takes every value.
 
 ### Logicians
 
@@ -127,6 +163,7 @@ A logician keeps a set of possible worlds.
 
 - When it sees an event, each world produces its own version of the event under the rules. It drops every world whose version it would have seen differently.
 - A logician believes the content of a `tell` only when the action's preconditions guarantee it (see `announce`).
+- A logician assumes nothing happened that they didn't see, except actions marked `may happen unseen`.
 
 ### Both
 
@@ -169,12 +206,29 @@ world Reading about Tale                 # Tale's names are visible here
 ```
 
 - `about` makes the other world's names visible, and its agents know that world's rules.
+- `tell(Narrator, Reader, Tale.start)`: an all-seeing narrator tells how things stood at the start. (A bare `start` means the frame world's own start.)
 - `agent Narrator is Tale.Sheppard` creates a first-person narrator. It starts with Sheppard's beliefs at `Tale.end`. The general form is `is <agent> at <time>`, which time travel also uses (section 12). It can lie, or narrate partial views (*The Murder of Roger Ackroyd*).
 - Worlds can nest further, for stories within stories.
 
 ---
 
-## 9. Prelude (built in)
+## 9. Libraries
+
+```
+use space                          # built in
+use "lib/court.ken"                # a file, relative to the model
+use "lib/court.ken" as law         # choose the prefix
+```
+
+- **std** (below) is in every world without a prefix. Every other library's names are reached through its prefix: `space.go`, `law.testify`.
+- A library may declare types, facts, actions, rules and `invariant:` blocks. It may `use` other libraries; their names get both prefixes. It can't declare agents, worlds, a timeline, `given` or time travel.
+- Names a library uses without declaring belong to the model that uses it. Ken reports a type the model fails to supply.
+- `use` at the top of a file applies to every world; inside a world, to that world only.
+- `invariant:` is `expect throughout start .. end`.
+- **Sayings**: any action whose first parameter is an agent (the speaker) and which has an untyped parameter called `content` is testimony: people trust it as they trust `tell`, and the honesty rules apply.
+- **space** (built in): `fact at(Agent): Place`, `fact distance(Place, Place): Int = 0`, and `action go(x, to)`, seen by those at both ends. It turns on the travel check (section 5).
+
+## 9a. std (built in)
 
 ```
 fact honest(Agent): bool = true
@@ -203,10 +257,26 @@ expect throughout ch1 .. ch6: ...
 
 The checker also raises errors by itself for:
 - a failed `needs`, including an honest agent telling what they don't believe
-- a false `because`
+- a `because` on an event that the actor doesn't believe just before it
+- a conclusion resting on an event the person never saw or heard of, or on a belief they don't hold
 - an unresolved belief conflict
 - telling about an event the teller never saw or heard of
 - a changeable fact from another world used without `at`
+- `so that φ` when the actor doesn't want φ
+- clock times that run backwards, and (with `use space`) travel faster than the roads allow
+- an `invariant:` that stops holding
+- `saw`, `wants` or `suspects` nested inside someone's beliefs
+
+It warns when an actor knowingly undoes something they want with no `because` or `so that`, and when a conclusion has no `because`. It notes a plan (`so that`) that hasn't worked yet, and a watcher who notices a change.
+
+### Questions (command line)
+- `ken why FILE EVENT "A believes φ"`: each sighting and conclusion of A's up to EVENT is taken away in turn and the world re-run; those without which the belief goes are "needed".
+- `ken who FILE EVENT "φ"`: for each agent, knows / believes wrongly / believes the opposite / could deduce (`deducible by`) / doesn't know.
+- `ken whatif FILE --drop E` or `--move E --after F`: the difference in Ken's report.
+- `ken suggest FILE`: for each failing expectation, single events inserted just before its time that make it hold with fewer errors. Candidates are `tell`/`announce` of the fact-level parts of the expectation, and every instance of the world's actions.
+- `ken timeline FILE [--html OUT]`: every agent's belief about every relevant fact at every step.
+- `ken mind FILE AGENT [--at EVENT]`: one agent at every step (or one): facts known, believed wrongly, unsure (with the possible values), or contradictory; suspicions, wants and conclusions; what the event looked like to them; what they think each other agent believes, shown where it differs from their own view or from what that agent really believes; and, for a reader, what they believe about the tale. Without `--at`, the start in full and then the changes. Uses the explicit engine.
+- `--json` on any command: one JSON object on stdout. `check` gives `ok`, counts and `diagnostics` (level, line, world, at, message); `mind` gives `steps` with `knows`, `wrong`, `unsure`, `contradictory`, `suspects`, `wants`, `concludes`, `thinks_others`, `about` and `changes`; `timeline` gives `facts`; the others give `text`. Failures give `error`.
 
 ---
 
@@ -215,11 +285,13 @@ The checker also raises errors by itself for:
 | Group | Keywords |
 |---|---|
 | Structure | `world` `about` `revises … from` `given` `agent` `is … at` `#` (segment) `sees all of` `type` `fact` `action` `rule` `private` `timeline` `start` `end` `expect` |
-| Actions | `needs` `effect` `seen by` `every … where` `everyone` `as` `hiding` `secretly` `then` `for … in` |
+| Actions | `needs` `effect` `seen by` `(A, B) …` `every … where` `everyone` `as` `hiding` `secretly` `then` `for … in` |
 | Rules | `after` `sees` `for every` `when` `do` |
-| Belief | `concludes` `because` `despite` |
-| Formulas | `knows` `believes` `whether` `saw` `common knowledge among` `deducible by` `possible for` `all` `some` `in` `not` `and` `or` `=>` `<=>` |
-| Time | `at` `before` `throughout` `time travel:` `overwrite` `branching` `fixed` `allow bootstrap` |
+| Belief | `concludes` `because` `despite` `suspects` `forgets` `watches` `no longer watches` `wants` `no longer wants` `so that` |
+| Formulas | `knows` `believes` `whether` `saw` `wants` `suspects` `common knowledge among` `deducible by` `possible for` `all` `some` `in` `not` `and` `or` `=>` `<=>` |
+| Time | `at` `before` `throughout` `@` `time travel:` `overwrite` `branching` `fixed` `allow bootstrap` |
+| Libraries | `use NAME` `use "file.ken"` `as` `invariant:` |
+| Seeing | `secretly except … and …` `may happen unseen` |
 
 ## 12. Time travel
 

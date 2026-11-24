@@ -1,0 +1,90 @@
+# Joseph and his brothers (Genesis 37-45).
+#
+# The brothers sell Joseph and let Jacob read a bloody coat as his death.
+# Years later they bow before the governor of Egypt, not knowing it is
+# Joseph: his dream has come true, and only he knows it. He hides his cup in
+# Benjamin's sack to test them, then makes himself known.
+
+agent Joseph, Judah, Reuben, Benjamin, Jacob, Steward
+agent Zaphenath                          # "the Egyptian" the brothers think they meet (Gen 41:45)
+fact alive(Agent): bool = true
+fact sold: bool = false
+fact bowed(Agent, Agent): bool = false   # x has bowed down to y (Gen 37:7)
+fact cup: Agent                          # who has the silver cup
+fact planted: bool = false
+fact present(Agent): bool = false        # in Joseph's house, at the end
+
+action sell(x: Agent, y: Agent)
+  effect:  sold = true
+  seen by: x, y
+action show_coat(x: Agent, y: Agent)     # "know now whether it be thy son's coat"
+  seen by: x, y
+action die(x: Agent)
+  effect:  alive(x) = false
+  seen by: everyone
+action bow(x: Agent, y: Agent)
+  effect:  bowed(x, y) = true
+  seen by: x, y
+action hide_cup(x: Agent, y: Agent)
+  effect:  cup = y, planted = true
+  seen by: x
+action search(x: Agent, y: Agent)        # the cup is found in y's sack
+  needs:   cup = y
+  seen by: x, y, every b where present(b)
+action plead(x: Agent)                   # Judah offers himself in Benjamin's place
+  seen by: every b where present(b)
+action send_wagons(x: Agent, y: Agent)
+  needs:   alive(x)
+  seen by: y
+
+timeline:
+  start:
+    cup = Joseph
+    present(Joseph) = true
+    present(Judah) = true
+    present(Reuben) = true
+    present(Benjamin) = true
+    present(Steward) = true
+    seen by: everyone
+  e1: sell(Judah, Joseph)                # Reuben is away from the pit (37:29)
+  e2: show_coat(Judah, Jacob)
+        seen by: Judah, Jacob, Reuben, Benjamin
+        Jacob concludes not alive(Joseph) because e2      # "an evil beast hath devoured him"
+        Reuben concludes not alive(Joseph) because e2
+  e3: bow(Judah, Joseph) then bow(Reuben, Joseph)          # in Egypt, years later
+        seen by: Joseph
+        seen by: Judah as bow(Judah, Zaphenath) then bow(Reuben, Zaphenath)
+        seen by: Reuben as bow(Judah, Zaphenath) then bow(Reuben, Zaphenath)
+  e4: hide_cup(Steward, Benjamin)
+        seen by: Steward, Joseph         # at Joseph's command
+  e5: search(Steward, Benjamin)
+  e6: plead(Judah) because Judah believes cup = Benjamin
+  e7: tell(Joseph, Judah, e3) then tell(Joseph, Reuben, e3)   # "I am Joseph"
+        seen by: every b where present(b)
+        Judah concludes bowed(Judah, Joseph) because e3
+        Reuben concludes bowed(Reuben, Joseph) because e3
+        Reuben concludes alive(Joseph) because e7
+  e8: tell(Judah, Jacob, alive(Joseph))
+        Jacob concludes not alive(Joseph) despite e8      # "he believed them not" (45:26)
+  e9: send_wagons(Joseph, Jacob)         # "and when he saw the wagons... the spirit of Jacob revived"
+
+expect at e2:
+  Jacob believes not alive(Joseph)       # misled without a word of a lie
+  Reuben believes not alive(Joseph)      # he never knew of the sale
+  Judah knows alive(Joseph)
+expect at e3:
+  Joseph knows bowed(Judah, Joseph)      # the dream fulfilled
+  not (Judah believes bowed(Judah, Joseph))
+  Joseph knows not (Judah believes bowed(Judah, Joseph))
+expect at e5:
+  Judah believes cup = Benjamin
+  Joseph knows (Judah believes cup = Benjamin)
+  not (Judah believes planted)           # they don't suspect a test
+  Joseph knows not (Judah believes planted)
+expect at e7:
+  Judah knows bowed(Judah, Joseph)
+  Reuben knows alive(Joseph)
+expect at e8:
+  Jacob believes not alive(Joseph)
+expect at e9:
+  Jacob knows alive(Joseph)

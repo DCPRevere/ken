@@ -1,0 +1,3 @@
+# expect-error: a library can't declare agents
+use "lib/agents.ken"
+agent A

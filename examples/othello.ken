@@ -1,0 +1,68 @@
+# Othello: one planted clue, read the wrong way, and a man acts on it.
+# Iago lies outright; the handkerchief does the rest. Nobody else sees the
+# whole chain, so nobody can warn Othello until it is too late.
+
+agent Othello, Desdemona, Iago, Emilia, Cassio
+fact affair: bool                        # Desdemona and Cassio
+fact holder: Agent                       # who has the handkerchief
+fact alive(Agent): bool = true
+
+action drop(x: Agent)                    # x loses the handkerchief
+  needs:   holder = x
+  effect:  holder = Emilia
+  seen by: x
+action give(x: Agent, y: Agent)
+  needs:   holder = x
+  effect:  holder = y
+  seen by: x, y
+action plant(x: Agent, y: Agent)         # left in y's lodging
+  needs:   holder = x
+  effect:  holder = y
+  seen by: x
+action carry(x: Agent)                   # seen with the handkerchief
+  needs:   holder = x
+  seen by: x
+action kill(x: Agent, y: Agent)
+  effect:  alive(y) = false
+  seen by: x, y
+
+timeline:
+  start:
+    affair = false
+    holder = Desdemona
+    honest(Iago) = false                 # "honest Iago"
+    seen by: Iago
+    seen by: Othello hiding affair hiding honest(Iago)
+    seen by: Desdemona hiding honest(Iago)
+    seen by: Emilia hiding honest(Iago)
+    seen by: Cassio hiding honest(Iago)
+    Iago wants Othello believes affair
+  e1: drop(Desdemona)
+        seen by: Desdemona, Emilia       # Emilia picks it up
+  e2: give(Emilia, Iago)                 # her husband asked for it
+  e3: plant(Iago, Cassio)
+  e4: tell(Iago, Othello, affair) so that Othello believes affair   # the lie
+  e5: carry(Cassio)
+        seen by: Cassio, Othello secretly    # Othello watches, hidden
+        Othello concludes affair because e4 and e5
+  e6: kill(Othello, Desdemona) because Othello believes affair
+  e7: tell(Emilia, Othello, e2)          # "I found it by fortune, and did give it my husband"
+        Othello concludes not honest(Iago) because e2
+        Othello concludes not affair because e2
+
+expect at e4:
+  Othello believes affair                # he trusts "honest Iago"
+  Iago wants Othello believes affair
+  not (Othello knows affair)             # because it's false
+  Iago knows (Othello believes affair)
+  not (Desdemona believes (Othello believes affair))
+expect before e5:
+  Othello believes holder = Desdemona    # his first gift to her
+expect at e5:
+  Othello believes holder = Cassio       # the "ocular proof"
+  not (Cassio knows (Othello believes affair))
+expect before e7:
+  not (Emilia knows holder = Cassio)     # she doesn't know what Iago did with it
+expect at e7:
+  Othello knows not affair
+  Othello believes not honest(Iago)

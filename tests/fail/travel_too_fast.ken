@@ -1,0 +1,11 @@
+# expect-error: can't get from vicarage (start @ 0) to inn by e1 @ 12: it takes 15
+use space
+agent Vicar
+type Place = vicarage | church | inn
+timeline:
+  start @ 0:
+    space.at(Vicar) = vicarage
+    space.distance(vicarage, church) = 10
+    space.distance(church, inn) = 5
+    seen by: everyone
+  e1 @ 12: space.go(Vicar, inn)

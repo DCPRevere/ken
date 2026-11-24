@@ -28,14 +28,24 @@ impl Model {
 /// Supplies the event side of a product update.
 pub trait Scenarios {
     type S: Clone + Eq + Hash;
-    fn perceive(&mut self, m: &Model, agent: u32, s: &Self::S, w: u32) -> Result<Vec<Self::S>, String>;
+    fn perceive(
+        &mut self,
+        m: &Model,
+        agent: u32,
+        s: &Self::S,
+        w: u32,
+    ) -> Result<Vec<Self::S>, String>;
     fn pre(&mut self, m: &Model, s: &Self::S, w: u32) -> Result<bool, String>;
     fn post(&mut self, m: &Model, s: &Self::S, w: u32) -> Result<Rc<[Value]>, String>;
 }
 
 /// Product update from the actual world paired with the real scenario.
 /// Only nodes reachable from the actual node are built.
-pub fn product<X: Scenarios>(m: &Model, real: X::S, sc: &mut X) -> Result<(Model, Vec<(u32, X::S)>), String> {
+pub fn product<X: Scenarios>(
+    m: &Model,
+    real: X::S,
+    sc: &mut X,
+) -> Result<(Model, Vec<(u32, X::S)>), String> {
     let na = m.n_agents();
     let mut ids: HashMap<(u32, X::S), u32> = HashMap::new();
     let mut nodes: Vec<(u32, X::S)> = Vec::new();
@@ -93,7 +103,14 @@ pub fn product<X: Scenarios>(m: &Model, real: X::S, sc: &mut X) -> Result<(Model
             rel[a][n] = out;
         }
     }
-    Ok((Model { vals, rel, actual: 0 }, nodes))
+    Ok((
+        Model {
+            vals,
+            rel,
+            actual: 0,
+        },
+        nodes,
+    ))
 }
 
 /// Keep only worlds reachable from the actual one, then merge bisimilar worlds.
@@ -125,7 +142,11 @@ pub fn contract(m: &Model) -> Model {
             block[w] = *by_val.entry(&m.vals[w][..]).or_insert(n);
         }
     }
-    let mut count = block.iter().filter(|b| **b != u32::MAX).collect::<std::collections::HashSet<_>>().len();
+    let mut count = block
+        .iter()
+        .filter(|b| **b != u32::MAX)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
     loop {
         let mut sigs: HashMap<(u32, Vec<Vec<u32>>), u32> = HashMap::new();
         let mut nb = vec![u32::MAX; m.n()];
@@ -167,5 +188,9 @@ pub fn contract(m: &Model) -> Model {
             rel[a][b] = bs;
         }
     }
-    Model { vals, rel, actual: block[m.actual as usize] }
+    Model {
+        vals,
+        rel,
+        actual: block[m.actual as usize],
+    }
 }

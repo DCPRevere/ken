@@ -1,0 +1,12 @@
+# expect-error: resolve it with a conclusion
+# B is told a version of e1 that conflicts with what B saw, and nobody resolves it.
+agent A, B, C
+action wave(x: Agent)
+  seen by: x
+action strike(x: Agent)
+  seen by: x
+timeline:
+  e1: strike(A)
+        seen by: A, C
+        seen by: B as wave(A)
+  e2: tell(C, B, e1)

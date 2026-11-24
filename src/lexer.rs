@@ -4,6 +4,8 @@
 pub enum Tok {
     Ident(String),
     Int(i64),
+    /// a quoted string, used only for library paths
+    Str(String),
     Sym(&'static str),
     Newline,
     Indent,
@@ -20,8 +22,8 @@ pub struct Token {
 }
 
 const SYMS: &[&str] = &[
-    "<=>", "..", "=>", "!=", "<=", ">=", ":", ",", "(", ")", "[", "]", ".", "=", "<", ">", "+", "-",
-    "*", "|",
+    "<=>", "..", "=>", "!=", "<=", ">=", ":", ",", "(", ")", "[", "]", ".", "=", "<", ">", "+",
+    "-", "*", "|", "@",
 ];
 
 pub fn lex(src: &str) -> Result<Vec<Token>, (usize, String)> {
@@ -61,11 +63,21 @@ pub fn lex(src: &str) -> Result<Vec<Token>, (usize, String)> {
                 let cur = *indents.last().unwrap();
                 if col > cur {
                     indents.push(col);
-                    out.push(Token { tok: Tok::Indent, line, start: i, end: i });
+                    out.push(Token {
+                        tok: Tok::Indent,
+                        line,
+                        start: i,
+                        end: i,
+                    });
                 } else {
                     while col < *indents.last().unwrap() {
                         indents.pop();
-                        out.push(Token { tok: Tok::Dedent, line, start: i, end: i });
+                        out.push(Token {
+                            tok: Tok::Dedent,
+                            line,
+                            start: i,
+                            end: i,
+                        });
                     }
                     if col != *indents.last().unwrap() {
                         return Err((line, "inconsistent indentation".into()));
@@ -91,7 +103,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, (usize, String)> {
             if cont {
                 continuing = true;
             } else if !matches!(out.last().map(|t| &t.tok), Some(Tok::Newline) | None) {
-                out.push(Token { tok: Tok::Newline, line: line - 1, start: i, end: i });
+                out.push(Token {
+                    tok: Tok::Newline,
+                    line: line - 1,
+                    start: i,
+                    end: i,
+                });
             }
             continue;
         }
@@ -105,13 +122,38 @@ pub fn lex(src: &str) -> Result<Vec<Token>, (usize, String)> {
             }
             continue;
         }
+        if c == b'"' {
+            let s = i;
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' && bytes[i] != b'\n' {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'"' {
+                return Err((line, "unterminated string".into()));
+            }
+            i += 1;
+            out.push(Token {
+                tok: Tok::Str(src[s + 1..i - 1].to_string()),
+                line,
+                start: s,
+                end: i,
+            });
+            continue;
+        }
         if c.is_ascii_digit() {
             let s = i;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            let n: i64 = src[s..i].parse().map_err(|_| (line, "bad number".to_string()))?;
-            out.push(Token { tok: Tok::Int(n), line, start: s, end: i });
+            let n: i64 = src[s..i]
+                .parse()
+                .map_err(|_| (line, "bad number".to_string()))?;
+            out.push(Token {
+                tok: Tok::Int(n),
+                line,
+                start: s,
+                end: i,
+            });
             continue;
         }
         if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 {
@@ -126,7 +168,12 @@ pub fn lex(src: &str) -> Result<Vec<Token>, (usize, String)> {
                     break;
                 }
             }
-            out.push(Token { tok: Tok::Ident(src[s..i].to_string()), line, start: s, end: i });
+            out.push(Token {
+                tok: Tok::Ident(src[s..i].to_string()),
+                line,
+                start: s,
+                end: i,
+            });
             continue;
         }
         let mut matched = false;
@@ -138,23 +185,49 @@ pub fn lex(src: &str) -> Result<Vec<Token>, (usize, String)> {
                 if *s == ")" || *s == "]" {
                     depth -= 1;
                 }
-                out.push(Token { tok: Tok::Sym(s), line, start: i, end: i + s.len() });
+                out.push(Token {
+                    tok: Tok::Sym(s),
+                    line,
+                    start: i,
+                    end: i + s.len(),
+                });
                 i += s.len();
                 matched = true;
                 break;
             }
         }
         if !matched {
-            return Err((line, format!("unexpected character '{}'", src[i..].chars().next().unwrap())));
+            return Err((
+                line,
+                format!(
+                    "unexpected character '{}'",
+                    src[i..].chars().next().unwrap()
+                ),
+            ));
         }
     }
     if !matches!(out.last().map(|t| &t.tok), Some(Tok::Newline) | None) {
-        out.push(Token { tok: Tok::Newline, line, start: i, end: i });
+        out.push(Token {
+            tok: Tok::Newline,
+            line,
+            start: i,
+            end: i,
+        });
     }
     while indents.len() > 1 {
         indents.pop();
-        out.push(Token { tok: Tok::Dedent, line, start: i, end: i });
+        out.push(Token {
+            tok: Tok::Dedent,
+            line,
+            start: i,
+            end: i,
+        });
     }
-    out.push(Token { tok: Tok::Eof, line, start: i, end: i });
+    out.push(Token {
+        tok: Tok::Eof,
+        line,
+        start: i,
+        end: i,
+    });
     Ok(out)
 }

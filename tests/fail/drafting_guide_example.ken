@@ -1,0 +1,74 @@
+# expect-ok
+# The example in docs/drafting-guide.md, kept in sync by hand.
+use space                           # a library: space.at, space.go, space.distance
+
+agent Ada, Ben, Cat                 # people (they hold beliefs and revise them)
+agent Holmes : logician             # exact reasoner over possibilities
+type Place = hall | garden          # space needs your model to name its places
+fact guilty(Agent): bool = false    # facts; a default is optional
+fact lamp: bool = true
+fact cloaked(Agent): bool = false
+fact passed(Agent): bool = false
+fact host: Agent in Ada, Ben        # who is who: a short list of candidates
+
+action refuse(x: Agent, y: Agent)
+  seen by: x, y
+action wave(x: Agent)
+  seen by: x
+action slip_out(x: Agent)
+  seen by: x
+  may happen unseen                 # logicians allow it happened out of sight
+action douse(x: Agent)
+  effect:  lamp = false
+  seen by: x
+action pass(x: Agent)
+  effect:  passed(x) = true
+  seen by: everyone
+  seen by: every a where cloaked(x) and a != x as pass(Cat)   # what it looks like depends on facts
+
+timeline:
+  start @ 0:                        # optional clock time
+    space.at(Ada) = hall
+    space.at(Ben) = hall
+    space.at(Cat) = hall
+    space.at(Holmes) = hall
+    space.distance(hall, garden) = 5   # checked against @ times
+    cloaked(Ada) = true
+    host = Ada
+    seen by: Ada, Holmes
+    seen by: (Ben, Cat) hiding guilty(Ada) hiding host   # one view for both
+    Ada wants not (Ben believes guilty(Ada))
+    Holmes watches lamp               # sees its value after every step
+  e1 @ 6: space.go(Ada, garden)
+        seen by: Ada
+        seen by: Ben secretly                  # Ben watches unseen
+        seen by: Cat as space.go(Ben, garden)  # Cat misperceives it
+        Ben concludes guilty(Ada) because e1
+  e2: tell(Ada, Ben, not guilty(Ada)) so that not (Ben believes guilty(Ada))
+  e3: refuse(Ben, Ada) because Ben believes guilty(Ada)
+        Cat suspects guilty(Ada) because e1    # a loose belief
+  e4: tell(Ben, Cat, e1)                       # Ben passes on his view of e1
+        Cat concludes space.at(Ada) = garden because e1
+        Ben forgets space.at(Ada)
+  e5: wave(Ben)
+        seen by: Ben, Ada secretly except Ben  # Ada thinks she's hidden; Ben knows
+  e6: douse(Ada)                               # unseen, but Holmes notices the lamp
+  e7: pass(Ada)                                # everyone else sees "Cat" pass
+
+invariant:                                     # must hold at every step
+  not guilty(Ada)
+expect at e3:
+  Ben believes guilty(Ada)
+  not (Ada knows (Ben believes guilty(Ada)))
+  Ada wants not (Ben believes guilty(Ada))
+  Cat suspects guilty(Ada)
+expect at e4:
+  Cat believes space.at(Ada) = garden
+  not (Ben knows space.at(Ada) = garden)
+expect at e6:
+  Holmes knows not lamp
+  Ben believes lamp
+expect at e7:
+  Ben believes passed(Cat)
+  not passed(Cat)
+  not (Ben knows whether host = Ada)

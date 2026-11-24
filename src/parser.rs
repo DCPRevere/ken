@@ -14,9 +14,42 @@ pub struct Parser<'a> {
 pub type PResult<T> = Result<T, (usize, String)>;
 
 const RESERVED: &[&str] = &[
-    "and", "or", "not", "knows", "believes", "saw", "at", "as", "in", "for", "because", "despite",
-    "then", "where", "hiding", "secretly", "whether", "concludes", "seen", "by", "all", "some",
-    "common", "deducible", "possible", "before", "do", "when", "after", "sees", "every",
+    "and",
+    "or",
+    "not",
+    "knows",
+    "believes",
+    "saw",
+    "at",
+    "as",
+    "in",
+    "for",
+    "because",
+    "despite",
+    "then",
+    "where",
+    "hiding",
+    "secretly",
+    "whether",
+    "concludes",
+    "seen",
+    "by",
+    "all",
+    "some",
+    "common",
+    "deducible",
+    "possible",
+    "before",
+    "do",
+    "when",
+    "after",
+    "sees",
+    "every",
+    "wants",
+    "suspects",
+    "forgets",
+    "except",
+    "watches",
 ];
 
 impl<'a> Parser<'a> {
@@ -38,7 +71,11 @@ impl<'a> Parser<'a> {
         self.toks[self.pos].start
     }
     fn prev_end(&self) -> usize {
-        if self.pos == 0 { 0 } else { self.toks[self.pos - 1].end }
+        if self.pos == 0 {
+            0
+        } else {
+            self.toks[self.pos - 1].end
+        }
     }
     fn advance(&mut self) -> Tok {
         let t = self.toks[self.pos].tok.clone();
@@ -51,6 +88,7 @@ impl<'a> Parser<'a> {
         let found = match self.peek() {
             Tok::Ident(s) => format!("'{}'", s),
             Tok::Int(n) => format!("'{}'", n),
+            Tok::Str(s) => format!("\"{}\"", s),
             Tok::Sym(s) => format!("'{}'", s),
             Tok::Newline => "end of line".into(),
             Tok::Indent => "an indented block".into(),
@@ -64,6 +102,9 @@ impl<'a> Parser<'a> {
     }
     fn is_kw_at(&self, k: usize, kw: &str) -> bool {
         matches!(self.peek_at(k), Tok::Ident(s) if s == kw)
+    }
+    fn is_sym_at(&self, k: usize, s: &str) -> bool {
+        matches!(self.peek_at(k), Tok::Sym(x) if *x == s)
     }
     fn is_sym(&self, s: &str) -> bool {
         matches!(self.peek(), Tok::Sym(x) if *x == s)
@@ -85,10 +126,18 @@ impl<'a> Parser<'a> {
         }
     }
     fn expect_kw(&mut self, kw: &str) -> PResult<()> {
-        if self.eat_kw(kw) { Ok(()) } else { self.err(format!("expected '{}'", kw)) }
+        if self.eat_kw(kw) {
+            Ok(())
+        } else {
+            self.err(format!("expected '{}'", kw))
+        }
     }
     fn expect_sym(&mut self, s: &str) -> PResult<()> {
-        if self.eat_sym(s) { Ok(()) } else { self.err(format!("expected '{}'", s)) }
+        if self.eat_sym(s) {
+            Ok(())
+        } else {
+            self.err(format!("expected '{}'", s))
+        }
     }
     fn ident(&mut self) -> PResult<String> {
         match self.peek().clone() {
@@ -99,6 +148,17 @@ impl<'a> Parser<'a> {
             _ => self.err("expected a name"),
         }
     }
+    /// A name, possibly qualified by a library alias: `at`, `space.at`.
+    fn qual_ident(&mut self) -> PResult<String> {
+        let mut n = self.ident()?;
+        while self.is_sym(".") && matches!(self.peek_at(1), Tok::Ident(_)) && is_alias(&n) {
+            self.advance();
+            let m = self.ident()?;
+            n = format!("{}.{}", n, m);
+        }
+        Ok(n)
+    }
+
     fn label(&mut self) -> PResult<String> {
         match self.peek().clone() {
             Tok::Ident(s) => {
@@ -128,7 +188,23 @@ impl<'a> Parser<'a> {
         }
     }
     fn mk(&self, kind: ExprKind, start: usize, line: usize) -> E {
-        Rc::new(Expr { kind, span: Span { line, start, end: self.prev_end() } })
+        Rc::new(Expr {
+            kind,
+            span: Span {
+                line,
+                start,
+                end: self.prev_end(),
+            },
+        })
+    }
+
+    /// After a standalone expression: nothing else may follow.
+    pub fn end_of_input(&mut self) -> PResult<()> {
+        self.skip_newlines();
+        match self.peek() {
+            Tok::Eof | Tok::Dedent => Ok(()),
+            _ => self.err("unexpected text after the formula"),
+        }
     }
 
     // ---------------------------------------------------------------- file
@@ -165,7 +241,11 @@ impl<'a> Parser<'a> {
     }
 
     fn span_from(&self, start: usize, line: usize) -> Span {
-        Span { line, start, end: self.prev_end() }
+        Span {
+            line,
+            start,
+            end: self.prev_end(),
+        }
     }
 
     fn decl(&mut self) -> PResult<Decl> {
@@ -345,17 +425,25 @@ impl<'a> Parser<'a> {
                 let mut needs = Vec::new();
                 let mut effects = Vec::new();
                 let mut seen_by = None;
+                let mut unseen = false;
                 if matches!(self.peek(), Tok::Indent) {
                     let clauses = self.block(|p| p.action_clause())?;
                     for c in clauses {
                         match c {
                             ActionClause::Needs(e) => needs.push(e),
                             ActionClause::Effect(a) => effects.extend(a),
-                            ActionClause::SeenBy(s) => seen_by = Some(s),
+                            // later lines refine earlier ones: `seen by: everyone`
+                            // then `seen by: every a where … as …`
+                            ActionClause::SeenBy(s) => {
+                                let mut all: Vec<SeenItem> = seen_by.take().unwrap_or_default();
+                                all.extend(s);
+                                seen_by = Some(all)
+                            }
+                            ActionClause::Unseen => unseen = true,
                         }
                     }
                 }
-                Ok(Decl::Action { name, params, needs, effects, seen_by, span: self.span_from(start, line) })
+                Ok(Decl::Action { name, params, needs, effects, seen_by, unseen, span: self.span_from(start, line) })
             }
             "private" | "rule" => {
                 let private = self.eat_kw("private");
@@ -449,6 +537,35 @@ impl<'a> Parser<'a> {
                 self.newline()?;
                 Ok(Decl::TimeTravel(m, self.span_from(start, line)))
             }
+            "use" => {
+                self.advance();
+                let target = match self.peek().clone() {
+                    Tok::Str(p) => {
+                        self.advance();
+                        UseTarget::Path(p)
+                    }
+                    Tok::Ident(n) => {
+                        self.advance();
+                        UseTarget::Builtin(n)
+                    }
+                    _ => return self.err("expected a library name or a \"path.ken\" after `use`"),
+                };
+                let alias = if self.eat_kw("as") { Some(self.ident()?) } else { None };
+                self.newline()?;
+                Ok(Decl::Use { target, alias, span: self.span_from(start, line) })
+            }
+            "invariant" => {
+                // shorthand for `expect throughout start .. end`
+                self.advance();
+                self.expect_sym(":")?;
+                self.newline()?;
+                let formulas = self.block(|p| {
+                    let e = p.expr()?;
+                    p.newline()?;
+                    Ok(e)
+                })?;
+                Ok(Decl::Expect(Expect { time: ExpectTime::Throughout(TimeRef::Start, TimeRef::End), formulas, span: self.span_from(start, line) }))
+            }
             "allow" => {
                 self.advance();
                 self.expect_kw("bootstrap")?;
@@ -481,17 +598,42 @@ impl<'a> Parser<'a> {
             Ok(ActionClause::Needs(e))
         } else if self.eat_kw("effect") {
             self.expect_sym(":")?;
-            let mut v = vec![self.assign()?];
-            while self.eat_sym(",") {
+            let mut v = vec![];
+            if !matches!(self.peek(), Tok::Newline) {
                 v.push(self.assign()?);
+                while self.eat_sym(",") {
+                    v.push(self.assign()?);
+                }
             }
             self.newline()?;
+            // more assignments on indented lines
+            if matches!(self.peek(), Tok::Indent) {
+                let more = self.block(|p| {
+                    let mut xs = vec![p.assign()?];
+                    while p.eat_sym(",") {
+                        xs.push(p.assign()?);
+                    }
+                    p.newline()?;
+                    Ok(xs)
+                })?;
+                v.extend(more.into_iter().flatten());
+            }
+            if v.is_empty() {
+                return self.err("expected an assignment after 'effect:'");
+            }
             Ok(ActionClause::Effect(v))
         } else if self.is_kw("seen") {
             let (s, _) = self.seen_by()?;
             Ok(ActionClause::SeenBy(s))
+        } else if self.eat_kw("may") {
+            self.expect_kw("happen")?;
+            self.expect_kw("unseen")?;
+            self.newline()?;
+            Ok(ActionClause::Unseen)
+        } else if matches!(self.peek(), Tok::Indent) {
+            self.err("an action clause can't continue on an indented line, except after `effect:`")
         } else {
-            self.err("expected 'needs:', 'effect:' or 'seen by:'")
+            self.err("expected 'needs:', 'effect:', 'seen by:' or 'may happen unseen'")
         }
     }
 
@@ -510,7 +652,12 @@ impl<'a> Parser<'a> {
             let hi = self.additive()?;
             for_range = Some((v, lo, hi));
         }
-        Ok(Assign { target, value, for_range, span: self.span_from(start, line) })
+        Ok(Assign {
+            target,
+            value,
+            for_range,
+            span: self.span_from(start, line),
+        })
     }
 
     fn seen_by(&mut self) -> PResult<(Vec<SeenItem>, Span)> {
@@ -521,7 +668,20 @@ impl<'a> Parser<'a> {
         self.expect_sym(":")?;
         let mut items = Vec::new();
         loop {
-            let who = if self.eat_kw("everyone") {
+            // `(A, B, C) hiding x`: one view shared by several observers
+            let mut group: Vec<E> = vec![];
+            if self.eat_sym("(") {
+                loop {
+                    group.push(self.postfix_primary()?);
+                    if !self.eat_sym(",") {
+                        break;
+                    }
+                }
+                self.expect_sym(")")?;
+            }
+            let who = if !group.is_empty() {
+                Who::Nobody
+            } else if self.eat_kw("everyone") {
                 Who::Everyone
             } else if self.eat_kw("nobody") {
                 Who::Nobody
@@ -537,7 +697,11 @@ impl<'a> Parser<'a> {
                 } else {
                     (None, a)
                 };
-                let cond = if self.eat_kw("where") { Some(self.or_expr()?) } else { None };
+                let cond = if self.eat_kw("where") {
+                    Some(self.or_expr()?)
+                } else {
+                    None
+                };
                 Who::Every { ty, var, cond }
             } else {
                 Who::Agent(self.postfix_primary()?)
@@ -553,12 +717,28 @@ impl<'a> Parser<'a> {
                 } else if self.eat_kw("hiding") {
                     mods.push(Modifier::Hiding(self.postfix_primary()?));
                 } else if self.eat_kw("secretly") {
-                    mods.push(Modifier::Secretly);
+                    let mut except = vec![];
+                    if self.eat_kw("except") {
+                        except.push(self.postfix_primary()?);
+                        while self.eat_kw("and") {
+                            except.push(self.postfix_primary()?);
+                        }
+                    }
+                    mods.push(Modifier::Secretly(except));
                 } else {
                     break;
                 }
             }
-            items.push(SeenItem { who, mods });
+            if group.is_empty() {
+                items.push(SeenItem { who, mods });
+            } else {
+                for g in group {
+                    items.push(SeenItem {
+                        who: Who::Agent(g),
+                        mods: mods.clone(),
+                    });
+                }
+            }
             if !self.eat_sym(",") {
                 break;
             }
@@ -570,7 +750,7 @@ impl<'a> Parser<'a> {
     fn call(&mut self) -> PResult<Call> {
         let start = self.start();
         let line = self.line();
-        let name = self.ident()?;
+        let name = self.qual_ident()?;
         let mut args = Vec::new();
         self.expect_sym("(")?;
         if !self.is_sym(")") {
@@ -582,7 +762,11 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_sym(")")?;
-        Ok(Call { name, args, span: self.span_from(start, line) })
+        Ok(Call {
+            name,
+            args,
+            span: self.span_from(start, line),
+        })
     }
 
     fn call_arg(&mut self) -> PResult<E> {
@@ -612,33 +796,67 @@ impl<'a> Parser<'a> {
             self.expect_sym("..")?;
             let hi = self.additive()?;
             self.newline()?;
-            let clauses = if matches!(self.peek(), Tok::Indent) { self.block(|p| p.event_clause())? } else { vec![] };
+            let clauses = if matches!(self.peek(), Tok::Indent) {
+                self.block(|p| p.event_clause())?
+            } else {
+                vec![]
+            };
             return Ok(EventDecl {
                 label: c.name.clone(),
                 repeat: Some((v, lo, hi)),
                 label_args: c.args.clone(),
                 actions: vec![c],
                 because: None,
+                purpose: None,
+                time: None,
                 clauses,
                 span: self.span_from(start, line),
             });
         }
         let label = self.label()?;
+        let time = if self.eat_sym("@") {
+            Some(self.additive()?)
+        } else {
+            None
+        };
         self.expect_sym(":")?;
         let mut actions = Vec::new();
         let mut because = None;
+        let mut purpose = None;
         if !matches!(self.peek(), Tok::Newline) {
             actions.push(self.call()?);
             while self.eat_kw("then") {
                 actions.push(self.call()?);
             }
-            if self.eat_kw("because") {
-                because = Some(self.expr()?);
+            loop {
+                if self.eat_kw("because") {
+                    because = Some(self.expr()?);
+                } else if self.is_kw("so") && self.is_kw_at(1, "that") {
+                    self.advance();
+                    self.advance();
+                    purpose = Some(self.expr()?);
+                } else {
+                    break;
+                }
             }
         }
         self.newline()?;
-        let clauses = if matches!(self.peek(), Tok::Indent) { self.block(|p| p.event_clause())? } else { vec![] };
-        Ok(EventDecl { label, repeat: None, label_args: vec![], actions, because, clauses, span: self.span_from(start, line) })
+        let clauses = if matches!(self.peek(), Tok::Indent) {
+            self.block(|p| p.event_clause())?
+        } else {
+            vec![]
+        };
+        Ok(EventDecl {
+            label,
+            repeat: None,
+            label_args: vec![],
+            actions,
+            because,
+            purpose,
+            time,
+            clauses,
+            span: self.span_from(start, line),
+        })
     }
 
     fn event_clause(&mut self) -> PResult<EventClause> {
@@ -651,12 +869,97 @@ impl<'a> Parser<'a> {
         // conclusion: <agent> concludes φ because … [despite …]
         let save = self.pos;
         if let Ok(agent) = self.postfix_primary() {
+            if self.eat_kw("wants") {
+                let formula = self.expr()?;
+                self.newline()?;
+                return Ok(EventClause::Wants {
+                    agent,
+                    formula,
+                    on: true,
+                    span: self.span_from(start, line),
+                });
+            }
+            if self.is_kw("no") && self.is_kw_at(1, "longer") && self.is_kw_at(2, "wants") {
+                self.advance();
+                self.advance();
+                self.advance();
+                let formula = self.expr()?;
+                self.newline()?;
+                return Ok(EventClause::Wants {
+                    agent,
+                    formula,
+                    on: false,
+                    span: self.span_from(start, line),
+                });
+            }
+            if self.eat_kw("watches") {
+                let what = self.postfix_primary()?;
+                self.newline()?;
+                return Ok(EventClause::Watches {
+                    agent,
+                    what,
+                    on: true,
+                    span: self.span_from(start, line),
+                });
+            }
+            if self.is_kw("no") && self.is_kw_at(1, "longer") && self.is_kw_at(2, "watches") {
+                self.advance();
+                self.advance();
+                self.advance();
+                let what = self.postfix_primary()?;
+                self.newline()?;
+                return Ok(EventClause::Watches {
+                    agent,
+                    what,
+                    on: false,
+                    span: self.span_from(start, line),
+                });
+            }
+            if self.eat_kw("forgets") {
+                let what = self.postfix_primary()?;
+                self.newline()?;
+                return Ok(EventClause::Forgets {
+                    agent,
+                    what,
+                    span: self.span_from(start, line),
+                });
+            }
+            if self.eat_kw("suspects") {
+                let formula = self.expr_no_because()?;
+                let because = if self.eat_kw("because") {
+                    Some(self.expr_no_because()?)
+                } else {
+                    None
+                };
+                self.newline()?;
+                return Ok(EventClause::Suspects(Conclusion {
+                    agent,
+                    formula,
+                    because,
+                    despite: None,
+                    span: self.span_from(start, line),
+                }));
+            }
             if self.eat_kw("concludes") {
                 let formula = self.expr_no_because()?;
-                let because = if self.eat_kw("because") { Some(self.expr_no_because()?) } else { None };
-                let despite = if self.eat_kw("despite") { Some(self.expr_no_because()?) } else { None };
+                let because = if self.eat_kw("because") {
+                    Some(self.expr_no_because()?)
+                } else {
+                    None
+                };
+                let despite = if self.eat_kw("despite") {
+                    Some(self.expr_no_because()?)
+                } else {
+                    None
+                };
                 self.newline()?;
-                return Ok(EventClause::Concludes(Conclusion { agent, formula, because, despite, span: self.span_from(start, line) }));
+                return Ok(EventClause::Concludes(Conclusion {
+                    agent,
+                    formula,
+                    because,
+                    despite,
+                    span: self.span_from(start, line),
+                }));
             }
         }
         self.pos = save;
@@ -676,7 +979,7 @@ impl<'a> Parser<'a> {
             let hi = self.additive()?;
             return Ok(TypeRef::Range(lo, hi));
         }
-        Ok(TypeRef::Named(self.ident()?))
+        Ok(TypeRef::Named(self.qual_ident()?))
     }
 
     fn time_ref(&mut self) -> PResult<TimeRef> {
@@ -696,14 +999,26 @@ impl<'a> Parser<'a> {
                 return Ok(TimeRef::Start); // world-qualified start: rarely needed
             }
             if self.eat_kw("end") {
-                return Ok(TimeRef::Event { world: Some(first), label: "end".into(), args: vec![] });
+                return Ok(TimeRef::Event {
+                    world: Some(first),
+                    label: "end".into(),
+                    args: vec![],
+                });
             }
             let label = self.label()?;
             let args = self.time_args()?;
-            return Ok(TimeRef::Event { world: Some(first), label, args });
+            return Ok(TimeRef::Event {
+                world: Some(first),
+                label,
+                args,
+            });
         }
         let args = self.time_args()?;
-        Ok(TimeRef::Event { world: None, label: first, args })
+        Ok(TimeRef::Event {
+            world: None,
+            label: first,
+            args,
+        })
     }
 
     fn time_args(&mut self) -> PResult<Vec<E>> {
@@ -786,13 +1101,33 @@ impl<'a> Parser<'a> {
         let l = self.additive()?;
         // epistemic forms: A knows φ, A believes φ, A knows whether φ, A saw x
         if self.is_kw("knows") || self.is_kw("believes") {
-            let mut mode = if self.is_kw("knows") { KMode::Knows } else { KMode::Believes };
+            let mut mode = if self.is_kw("knows") {
+                KMode::Knows
+            } else {
+                KMode::Believes
+            };
             self.advance();
             if mode == KMode::Knows && self.eat_kw("whether") {
                 mode = KMode::KnowsWhether;
             }
             let body = self.not_expr()?;
-            return Ok(self.mk(ExprKind::Epistemic { agent: l, mode, body }, start, line));
+            return Ok(self.mk(
+                ExprKind::Epistemic {
+                    agent: l,
+                    mode,
+                    body,
+                },
+                start,
+                line,
+            ));
+        }
+        if self.eat_kw("wants") {
+            let body = self.not_expr()?;
+            return Ok(self.mk(ExprKind::Wants { agent: l, body }, start, line));
+        }
+        if self.eat_kw("suspects") {
+            let body = self.not_expr()?;
+            return Ok(self.mk(ExprKind::Suspects { agent: l, body }, start, line));
         }
         if self.eat_kw("saw") {
             let what = self.additive()?;
@@ -861,7 +1196,8 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let f = self.ident()?;
                 e = self.mk(ExprKind::Field(e, f), start, line);
-            } else if self.is_kw("at") && !matches!(self.peek_at(1), Tok::Sym(":")) {
+            } else if self.is_kw("at") && !matches!(self.peek_at(1), Tok::Sym(":") | Tok::Sym("("))
+            {
                 self.advance();
                 let t = self.time_ref()?;
                 e = self.mk(ExprKind::At(e, t), start, line);
@@ -911,12 +1247,25 @@ impl<'a> Parser<'a> {
                         let ty = self.type_ref()?;
                         self.expect_sym(":")?;
                         let body = self.expr()?;
-                        return Ok(self.mk(ExprKind::Quant { all: s == "all", var, ty, body }, start, line));
+                        return Ok(self.mk(
+                            ExprKind::Quant {
+                                all: s == "all",
+                                var,
+                                ty,
+                                body,
+                            },
+                            start,
+                            line,
+                        ));
                     }
                     "common" => {
                         self.advance();
                         self.expect_kw("knowledge")?;
-                        let group = if self.eat_kw("among") { Some(self.ident()?) } else { None };
+                        let group = if self.eat_kw("among") {
+                            Some(self.ident()?)
+                        } else {
+                            None
+                        };
                         self.expect_sym(":")?;
                         let body = self.expr()?;
                         return Ok(self.mk(ExprKind::Common { group, body }, start, line));
@@ -939,13 +1288,34 @@ impl<'a> Parser<'a> {
                     }
                     _ => {}
                 }
-                if RESERVED.contains(&s.as_str()) {
+                if RESERVED.contains(&s.as_str())
+                    && !(s == "at" && matches!(self.peek_at(1), Tok::Sym("(")))
+                {
                     return self.err("expected an expression");
+                }
+                if is_alias(&s) && self.is_sym_at(1, ".") {
+                    let q = self.qual_ident()?;
+                    if self.eat_sym("(") {
+                        let mut args = Vec::new();
+                        if !self.is_sym(")") {
+                            loop {
+                                args.push(self.call_arg()?);
+                                if !self.eat_sym(",") {
+                                    break;
+                                }
+                            }
+                        }
+                        self.expect_sym(")")?;
+                        return Ok(self.mk(ExprKind::Call(q, args), start, line));
+                    }
+                    return Ok(self.mk(ExprKind::Name(q), start, line));
                 }
                 self.advance();
                 if self.is_sym(".") && matches!(self.peek_at(1), Tok::Ident(_)) {
                     // World.name — only if the first is capitalised and the next is a plain name
-                    if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && self.is_world_qualifier(&s) {
+                    if s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        && self.is_world_qualifier(&s)
+                    {
                         self.advance();
                         let n = self.ident()?;
                         return Ok(self.mk(ExprKind::Qualified(s, n), start, line));
@@ -983,15 +1353,49 @@ impl<'a> Parser<'a> {
 
 thread_local! {
     pub static WORLD_NAMES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Library aliases in scope while parsing, so `space.at` reads as one name.
+    pub static ALIASES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 enum ActionClause {
     Needs(E),
     Effect(Vec<Assign>),
     SeenBy(Vec<SeenItem>),
+    Unseen,
 }
 
 /// Pre-scan for `world X` declarations so qualified names parse.
+/// The aliases a file's `use` lines introduce: `use space` → space, `use "x/court.ken" as c` → c.
+pub fn scan_aliases(toks: &[Token]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, t) in toks.iter().enumerate() {
+        if !matches!(&t.tok, Tok::Ident(u) if u == "use") || (i > 0 && !matches!(toks[i - 1].tok, Tok::Newline | Tok::Indent | Tok::Dedent)) {
+            continue;
+        }
+        let base = match toks.get(i + 1).map(|x| &x.tok) {
+            Some(Tok::Ident(n)) => n.clone(),
+            Some(Tok::Str(p)) => alias_of_path(p),
+            _ => continue,
+        };
+        let alias = match (toks.get(i + 2).map(|x| &x.tok), toks.get(i + 3).map(|x| &x.tok)) {
+            (Some(Tok::Ident(a)), Some(Tok::Ident(n))) if a == "as" => n.clone(),
+            _ => base,
+        };
+        out.push(alias);
+    }
+    out
+}
+
+/// `lib/court.ken` → court
+pub fn alias_of_path(p: &str) -> String {
+    let file = p.rsplit('/').next().unwrap_or(p);
+    file.strip_suffix(".ken").unwrap_or(file).to_string()
+}
+
+fn is_alias(s: &str) -> bool {
+    ALIASES.with(|a| a.borrow().iter().any(|x| x == s))
+}
+
 pub fn scan_world_names(toks: &[Token]) -> Vec<String> {
     let mut out = Vec::new();
     for w in toks.windows(2) {

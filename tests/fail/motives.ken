@@ -1,0 +1,43 @@
+# expect-ok
+# Wants, plans, suspicion and forgetting.
+agent Iago, Othello, Cassio
+fact affair: bool
+fact code: 1 .. 3
+fact promoted(Agent): bool = false
+action promote(x: Agent, y: Agent)
+  effect:  promoted(y) = true
+  seen by: x, y
+action peek(x: Agent)
+  seen by: x
+timeline:
+  start:
+    affair = false
+    code = 2
+    honest(Iago) = false
+    seen by: Iago
+    seen by: Othello hiding affair hiding honest(Iago)
+    seen by: Cassio hiding honest(Iago) hiding code
+    Iago wants Othello believes affair
+  e1: tell(Iago, Othello, affair) so that Othello believes affair
+  e2: promote(Othello, Cassio)
+        Cassio suspects not honest(Iago) because e2
+  e3: peek(Othello)
+        Othello forgets code
+        Othello forgets e2
+  e4: peek(Iago)
+        Iago no longer wants Othello believes affair
+expect at e1:
+  Iago wants Othello believes affair
+  Othello believes affair
+expect at e2:
+  Cassio suspects not honest(Iago)
+  not (Cassio believes not honest(Iago))
+  not (Othello suspects affair)
+expect before e3:
+  Othello knows code = 2
+  Othello saw e2
+expect at e3:
+  not (Othello knows code = 2)
+  not (Othello saw e2)
+expect at e4:
+  not (Iago wants Othello believes affair)

@@ -1,0 +1,15 @@
+# expect-error: but Ann doesn't believe that just before e2: a reason for acting must be in the actor's head
+# A reason for acting has to be something the actor believes, not just something true.
+agent Ann, Bob
+fact fire: bool
+action shout(x: Agent)
+  seen by: everyone
+action smell(x: Agent)
+  seen by: x
+timeline:
+  start:
+    fire = true
+    seen by: Ann hiding fire
+    seen by: Bob
+  e1: smell(Bob)
+  e2: shout(Ann) because fire        # Ann has no idea there's a fire

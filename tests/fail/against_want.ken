@@ -1,0 +1,15 @@
+# expect-warning: acts against their own want `promoted(Cassio)`
+agent Othello, Cassio
+fact promoted(Agent): bool = false
+action promote(x: Agent, y: Agent)
+  effect:  promoted(y) = true
+  seen by: x, y
+action demote(x: Agent, y: Agent)
+  effect:  promoted(y) = false
+  seen by: x, y
+timeline:
+  start:
+    seen by: everyone
+    Othello wants promoted(Cassio)
+  e1: promote(Othello, Cassio)
+  e2: demote(Othello, Cassio)

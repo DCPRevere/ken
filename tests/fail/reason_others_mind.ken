@@ -1,0 +1,16 @@
+# expect-error: a reason for acting must be in Ann's head
+# Ann can't act on Bob's suspicion: she has no way to hold it.
+agent Ann, Bob
+fact fire: bool
+action shout(x: Agent)
+  seen by: everyone
+action smell(x: Agent)
+  seen by: x
+timeline:
+  start:
+    fire = true
+    seen by: Ann hiding fire
+    seen by: Bob hiding fire
+  e1: smell(Bob)
+        Bob suspects fire because e1
+  e2: shout(Ann) because Bob suspects fire

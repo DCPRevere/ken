@@ -1,0 +1,18 @@
+# court: testimony in open court. A library you can copy and change.
+#
+#   use "lib/court.ken"
+#   e1: court.swear(Ada)
+#   e2: court.testify(Ada, guilty(Ben))
+#
+# `testify` is a saying (its first parameter is the speaker, and it has a
+# `content`), so people take it as testimony, the way they take `tell`.
+
+fact sworn(Agent): bool = false
+
+action swear(x: Agent)
+  effect:  sworn(x) = true
+  seen by: everyone
+
+action testify(x: Agent, content)
+  needs:   sworn(x) and (honest(x) => x believes content)
+  seen by: everyone

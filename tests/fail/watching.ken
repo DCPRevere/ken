@@ -1,0 +1,21 @@
+# expect-ok
+# Ann watches the lamp. She doesn't see Bob put it out, but she notices it go dark.
+# Cat isn't watching, so she still thinks it's lit.
+agent Ann, Bob, Cat
+fact lit: bool
+fact bob_in: bool = false
+action sneak_in(x: Agent)
+  effect:  bob_in = true, lit = false
+  seen by: x
+timeline:
+  start:
+    lit = true
+    seen by: Ann, Bob, Cat
+    Ann watches lit
+  e1: sneak_in(Bob)
+        Ann concludes bob_in because Ann believes not lit
+expect at e1:
+  Ann believes not lit
+  Cat believes lit
+  Ann believes bob_in
+  not (Bob knows (Ann believes not lit))   # he doesn't know she's watching

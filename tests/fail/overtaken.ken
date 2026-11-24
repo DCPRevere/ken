@@ -1,0 +1,22 @@
+# expect-ok
+# A conclusion about something that can change is overtaken by what they see later.
+agent A, B
+fact home(Agent): bool = true
+action leave(x: Agent)
+  effect:  home(x) = false
+  seen by: x
+action wave(x: Agent)
+  needs:   home(x)
+  seen by: x, A
+action wait(x: Agent)
+  seen by: x
+timeline:
+  start:
+    seen by: everyone
+  e1: wait(A)
+        A concludes not home(B) because e1
+  e2: wave(B)
+expect at e1:
+  A believes not home(B)
+expect at e2:
+  A believes home(B)

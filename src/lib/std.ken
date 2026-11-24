@@ -1,0 +1,15 @@
+# std: built into every world, without a prefix.
+
+# Everyone is honest unless the story says otherwise.
+fact honest(Agent): bool = true
+
+# Saying something to one person. An action counts as testimony when its first
+# parameter is the speaker and it has an untyped parameter called `content`.
+action tell(x: Agent, y: Agent, content)
+  needs:   honest(x) => x believes content
+  seen by: x, y
+
+# Saying something everyone hears. Only what the speaker knows.
+action announce(x: Agent, content)
+  needs:   x knows content
+  seen by: everyone

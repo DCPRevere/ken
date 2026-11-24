@@ -1,0 +1,40 @@
+# Rashomon: one killing, four witnesses, four stories.
+#
+# The bandit says he killed the samurai in a fair fight. The wife says she
+# killed him. The dead samurai, speaking through a medium, says he took his
+# own life. The woodcutter says the bandit did it. The film never settles it.
+#
+# Ken checks two things:
+#   1. Whoever you decide the killer was, Ken tells you who must be lying.
+#      Change `killer` below and remove the matching `honest(...) = false`
+#      lines: an honest witness who tells a story they don't believe is an error.
+#   2. The priest, who hears all four, cannot work out the truth, but he can
+#      work out which stories can't both be true.
+
+use "lib/court.ken"                      # sworn testimony in open court
+
+agent Tajomaru, Masago, Takehiro, Woodcutter
+agent Priest : logician
+fact killer: Agent
+
+timeline:
+  start:                                 # what happened in the grove
+    killer = Tajomaru                    # one reading: the woodcutter's
+    honest(Masago) = false
+    honest(Takehiro) = false
+    seen by: Tajomaru, Masago, Takehiro, Woodcutter
+    seen by: Priest hiding killer hiding honest(Tajomaru) hiding honest(Masago) hiding honest(Takehiro) hiding honest(Woodcutter)
+  oaths: court.swear(Tajomaru) then court.swear(Masago) then court.swear(Takehiro) then court.swear(Woodcutter)
+  bandit: court.testify(Tajomaru, killer = Tajomaru)
+  wife: court.testify(Masago, killer = Masago)
+  husband: court.testify(Takehiro, killer = Takehiro)    # through the medium
+  woodcutter: court.testify(Woodcutter, killer = Tajomaru)
+
+expect at woodcutter:
+  not (Priest knows killer)                          # the truth stays hidden
+  not (Priest knows not killer = Masago)             # every story is still possible
+  not (Priest knows not killer = Takehiro)
+  Priest knows (honest(Masago) => killer = Masago)   # an honest witness would be right
+  Priest knows not (honest(Masago) and honest(Takehiro))
+  Priest knows not (honest(Tajomaru) and honest(Masago))
+  Priest knows (honest(Woodcutter) => not honest(Masago))

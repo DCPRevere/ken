@@ -1,0 +1,12 @@
+# expect-error: expected `not alarm`, but it is false
+agent A
+fact alarm: bool = false
+action ring(x: Agent)
+  effect:  alarm = true
+  seen by: x
+timeline:
+  start:
+    seen by: everyone
+  e1: ring(A)
+invariant:
+  not alarm

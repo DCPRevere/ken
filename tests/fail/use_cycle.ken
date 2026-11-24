@@ -1,0 +1,3 @@
+# expect-error: libraries use each other in a circle
+use "lib/cycle_a.ken"
+agent A

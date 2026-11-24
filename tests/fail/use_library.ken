@@ -1,0 +1,22 @@
+# expect-ok
+# A file library, one it uses in turn, and a library's own saying.
+use "lib/rumour.ken"
+use "lib/court.ken" as law
+agent Ann, Ben, Cat
+fact secret: bool
+timeline:
+  start:
+    secret = true
+    seen by: Ann
+    seen by: Ben hiding secret
+    seen by: Cat hiding secret
+  e1: rumour.whisper(Ann, Ben, secret)
+  e2: law.swear(Ben)
+  e3: law.testify(Ben, secret)
+expect at e1:
+  Ben believes secret
+  not (Cat believes secret)
+  rumour.spread
+expect at e3:
+  Cat believes secret
+  law.sworn(Ben)

@@ -45,3 +45,48 @@ Stopping here. The remaining open questions need your judgement or real use, not
 - New checks: bootstrap paradox (error), memory drift (warning). New formula `A saw e` / `A saw B` for "meeting yourself" and alibis.
 - Example "The Box" (Primer-style, original) and a bootstrap error case.
 - Self-review fixes: the race now reveals the winner through `needs` (seeing an event teaches its preconditions). Replaced the undefined `exists` formula and the removed `always`.
+
+## v0.6 → v0.7 (classic stories as tests)
+Writing Othello, Much Ado, Oedipus, Joseph and Rashomon exposed places where persons broke instead of revising. All six fixes follow one idea: **persons revise, logicians don't.**
+1. Trust lost is retroactive: concluding `not honest(x)` withdraws x's testimony and what rested on it (Othello, Oedipus).
+2. Testimony that contradicts what you know about something fixed is ignored (Hero at the altar).
+3. Surprise about something changeable means it changed unseen (the handkerchief in Cassio's room; Hero unveiled).
+4. Later conclusions set aside earlier testimony (Don Pedro after Borachio's confession).
+5. Conclusions about another's beliefs (`Hero concludes Claudio believes …`).
+6. A conflicting account of an event is accepted when the author resolves it with a conclusion, as the spec already said (the shepherd's account of the crossroads).
+Also: the contradiction handler now drops the conclusion that actually caused the contradiction, not just the newest.
+
+## v0.7 → v0.8 (closing the gaps)
+Everything on the gaps list from v0.7, in one pass:
+1. **Motives**: `wants`, `no longer wants`, `so that`. Errors for unwanted purposes; warnings for knowingly undoing your own want; notes for plans that haven't worked.
+2. **Seeing**: `secretly except` (the gulling in *Much Ado* now needs no workaround); `may happen unseen` for logicians; `suspects` as a loose belief.
+3. **Questions**: `ken why` (counterfactual: remove each source and re-run), `ken who`, `ken whatif`, `ken suggest`.
+4. **Space and time**: `@` clock times and `distance`; the checker pins each person's place at the timed events they take part in.
+5. **Revision**: one rule, by recency, for conclusions and testimony together. Forgetting facts and events. Announcements count as testimony for persons.
+6. **Engine limits**: rules trigger rules; narrators can tell about another world's `start`; `saw`, `wants` and `suspects` inside beliefs are now errors instead of silently wrong answers (`ken-draft`'s first test exposed this).
+7. **Tooling**: `ken timeline` (text and HTML), Vim/Neovim support, `scripts/ken-draft`, a warning for `seen by: A, B as …`, multi-line `effect:`, and `at(...)` usable as a fact name.
+
+Not done, on purpose: probabilities (they would need a different engine), attention limits, an LSP server (Vim's quickfix covers inline errors), characters reasoning about travel time.
+
+## v0.8 → v0.9 (libraries)
+- `use NAME`, `use "file.ken"`, `use … as x`. Library names are prefixed (`space.go`); names a library doesn't declare are the model's to supply, and a missing type is reported by name.
+- `std` is now a real file (`src/lib/std.ken`): `honest`, `tell`, `announce`. Still always loaded, without a prefix.
+- Travel moved out of the core: `distance` is gone; the built-in `space` library provides `at`, `distance` and `go`, and switches the travel check on.
+- `invariant:` so libraries (and models) can state what must hold at every step.
+- A saying is now any action with a speaker and an untyped `content`, not just `tell` and `announce`, so libraries can add their own (`examples/lib/court.ken`).
+- Found on the way: people now take public sayings as testimony, which the symbolic engine doesn't model, so it hands such worlds to the explicit engine.
+
+## v0.9 → v1.0 (Master and Commander)
+Modelling the film showed wrong models passing. The principle adopted: **the author asserts the psychology; Ken checks the information.** Reasons, conclusions and who is persuaded are the author's to state. Ken checks the character could have held them.
+1. **Reasons for acting must be in the actor's head.** `because φ` on an event now means the actor believes φ, unless φ is already about the actor's own mind. Someone else's suspicion, want or sighting is an error. Before, `because Hollom suspects …` let Aubrey act on a suspicion he couldn't know of.
+2. **Grounds for conclusions.** Already checked: cited events were seen or heard, and cited beliefs are held. New: a warning for a conclusion with no `because`. Tried and dropped: a check that cited events "bear on" the conclusion through the facts they mention. It flagged 22 sound conclusions (Claudio at the window, Othello's handkerchief), because the link between event and conclusion is usually the character's own reading, which is psychology.
+3. **Watching.** `A watches f`: A sees f's value after every step, and a person who expected otherwise notices and assumes an unseen change. The raft now matters: without it, the French captain sees the lights go out.
+4. **Appearances.** An action's later `seen by` lines refine earlier ones and may use `as`, so what an action looks like can depend on facts (a disguised ship looks like a whaler). Evaluated per possible world.
+5. **Who is who.** No new machinery: roles are agent-valued facts, and `fact captain: Agent in A, B` (already in the parser, now documented) keeps the candidates few. With all 9 agents as candidates the example took 73s; with 3, 1.5s.
+6. **Shared views.** `seen by: (A, B, C) hiding x`.
+
+Still open: the watcher's observation is private (others don't know what they saw), and observers named in an appearance can't see through it.
+
+## v1.0 → v1.1 (for agents)
+- `ken mind FILE AGENT [--at EVENT]`: what one character has in mind at each step, for writing a scene from their point of view. "What they think others believe" is filtered to the news: where they think someone differs from them, or misjudge what someone believes. Without the filter, a deceived character "thinks" everyone shares each of their mistakes, which buries the one line that matters (the French captain thinks his secret is safe; Aubrey knows).
+- `--json` on every command, so an agent can read results without parsing prose.

@@ -1,0 +1,26 @@
+# expect-ok
+# A rule's action can trigger another rule.
+agent Guard, Thief
+fact alarm: bool = false
+fact locked: bool = false
+action break_in(x: Agent)
+  seen by: everyone
+action ring(x: Agent)
+  effect:  alarm = true
+  seen by: everyone
+action lock(x: Agent)
+  effect:  locked = true
+  seen by: everyone
+rule alarm_rings:
+  after break_in(x):
+    do ring(Guard)
+rule doors_lock:
+  after ring(x):
+    do lock(Guard)
+timeline:
+  start:
+    seen by: everyone
+  e1: break_in(Thief)
+expect at e1:
+  alarm and locked
+  Guard knows locked

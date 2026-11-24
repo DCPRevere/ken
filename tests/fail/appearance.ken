@@ -1,0 +1,26 @@
+# expect-ok
+# What an action looks like depends on the facts: a disguised ship looks like a whaler.
+agent Aubrey, Capitaine
+type Ship = frigate | whaler
+fact disguised: bool = false
+fact sighted: Ship
+action disguise(x: Agent)
+  effect:  disguised = true
+  seen by: x
+action come_in_sight(x: Agent, s: Ship)
+  effect:  sighted = s
+  seen by: everyone
+  seen by: every a where disguised and a != x as come_in_sight(x, whaler)
+timeline:
+  start:
+    sighted = frigate
+    seen by: Aubrey, Capitaine
+  e1: come_in_sight(Aubrey, frigate)
+  e2: disguise(Aubrey)
+  e3: come_in_sight(Aubrey, frigate)
+expect at e1:
+  Capitaine knows sighted = frigate      # no disguise yet
+expect at e3:
+  Capitaine believes sighted = whaler
+  Aubrey knows (Capitaine believes sighted = whaler)
+  disguised

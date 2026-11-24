@@ -1,0 +1,12 @@
+# A library that uses another library.
+use "court.ken" as c
+fact spread: bool = false
+action whisper(x: Agent, y: Agent, content)
+  needs:   honest(x) => x believes content
+  effect:  spread = true
+  seen by: x, y
+action swear_and_testify(x: Agent, content)
+  needs:   honest(x) => x believes content
+  seen by: everyone
+invariant:
+  spread => true

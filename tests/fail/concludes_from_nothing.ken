@@ -1,0 +1,12 @@
+# expect-warning: this conclusion rests on nothing
+agent Ann, Bob
+fact fire: bool
+action shout(x: Agent)
+  seen by: everyone
+timeline:
+  start:
+    fire = true
+    seen by: Ann hiding fire
+    seen by: Bob
+  e1: shout(Bob)
+        Ann concludes fire

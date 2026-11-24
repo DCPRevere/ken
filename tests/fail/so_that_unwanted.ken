@@ -1,0 +1,10 @@
+# expect-error: acts so that `Cassio believes affair`, but doesn't want it
+agent Iago, Cassio
+fact affair: bool
+timeline:
+  start:
+    affair = false
+    honest(Iago) = false
+    seen by: Iago
+    seen by: Cassio hiding affair hiding honest(Iago)
+  e1: tell(Iago, Cassio, affair) so that Cassio believes affair

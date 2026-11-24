@@ -1,0 +1,88 @@
+# Much Ado About Nothing: two deceptions, one cruel and one kind.
+#
+# Don John's plot: Claudio watches Borachio court "Hero" at a window, but it
+# is Margaret in Hero's clothes. Claudio shames Hero at the altar.
+# The friar's plan: Hero is said to have died of the shame. Claudio mourns at
+# her tomb, which is empty.
+# The gulling: Benedick hides to eavesdrop, and his friends, who know he is
+# there, talk of Beatrice's love for him. It isn't true yet.
+
+agent Claudio, Hero, Margaret, Borachio, DonJohn, Leonato, Benedick, DonPedro
+fact faithful: bool                      # Hero
+fact alive(Agent): bool = true
+fact loves_benedick: bool = false        # Beatrice (offstage here)
+
+action court(x: Agent, y: Agent)         # at Hero's window, at night
+  seen by: x, y
+action hide(x: Agent)                    # Benedick, in the arbour
+  seen by: x
+action confess(x: Agent)
+  seen by: everyone
+action die(x: Agent)
+  effect:  alive(x) = false
+  seen by: everyone
+action entomb(x: Agent)
+  seen by: everyone
+action unveil(x: Agent)                  # the "dead" bride lifts her veil
+  needs:   alive(x)
+  seen by: everyone
+
+timeline:
+  start:
+    faithful = true
+    honest(DonPedro) = false             # a kindly liar, for the gulling
+    seen by: Hero, Leonato, Margaret, Borachio, DonJohn
+    seen by: Claudio hiding faithful
+    seen by: DonPedro hiding faithful
+    seen by: Benedick hiding honest(DonPedro) hiding loves_benedick
+
+  # Don John's plot
+  w1: court(Borachio, Margaret)
+        seen by: Borachio, Margaret
+        seen by: Claudio secretly as court(Borachio, Hero)
+        seen by: DonPedro secretly as court(Borachio, Hero)
+        Claudio concludes not faithful because w1
+        DonPedro concludes not faithful because w1
+  w2: tell(Claudio, Hero, not faithful) because Claudio believes not faithful
+        seen by: everyone                # at the altar
+        Hero concludes (Claudio believes not faithful) because w2
+
+  # The friar's plan: the tomb is empty, but Claudio takes it for the real thing
+  f1: entomb(Hero)
+        seen by: Hero, Leonato
+        seen by: Claudio as die(Hero) then entomb(Hero)
+
+  # The gulling of Benedick
+  g1: hide(Benedick)
+        seen by: Benedick, DonPedro secretly    # they spot him
+  g2: tell(DonPedro, Leonato, loves_benedick)
+        seen by: DonPedro, Leonato
+        seen by: Benedick secretly except DonPedro and Leonato   # he thinks he's hidden
+
+  # The watch catches Borachio boasting; he confesses all
+  c1: confess(Borachio)
+        Claudio concludes faithful because c1
+        DonPedro concludes faithful because c1
+  c2: unveil(Hero)
+
+expect at w1:
+  Claudio believes not faithful
+  not (Hero believes (Claudio believes not faithful))     # she has no idea
+  DonJohn knows faithful
+expect at w2:
+  Hero knows faithful                    # the accusation doesn't shake her
+  Hero believes (Claudio believes not faithful)
+  Leonato knows faithful
+expect at f1:
+  Claudio believes not alive(Hero)
+  Hero knows alive(Hero)
+expect at g2:
+  Benedick believes loves_benedick       # gulled
+  not loves_benedick                     # it isn't true (yet)
+  DonPedro believes (Benedick believes loves_benedick)
+  Leonato believes (Benedick believes loves_benedick)
+  not (Benedick believes (DonPedro believes (Benedick believes loves_benedick)))  # no idea it's a setup
+expect at c1:
+  Claudio knows faithful
+expect at c2:
+  Claudio knows alive(Hero)              # seeing her teaches it

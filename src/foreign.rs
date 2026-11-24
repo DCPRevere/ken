@@ -18,16 +18,26 @@ pub fn observed(prog: &Program, tw: usize, st: &ForeignStore) -> Known {
     let w = &prog.worlds[tw];
     let mut views: Vec<&(Vec<ActionInst>, usize)> = st.views.values().collect();
     views.sort_by_key(|v| v.1);
-    let mut known = Known::new();
+    let mut known: Known = st.facts.clone();
     for (acts, _) in views {
         for a in acts {
-            let Some(info) = w.actions.get(&*a.name) else { continue };
-            let env: Env = info.params.iter().zip(a.args.iter()).map(|((n, _), v)| (Rc::from(n.as_str()), v.clone())).collect();
+            let Some(info) = w.actions.get(&*a.name) else {
+                continue;
+            };
+            let env: Env = info
+                .params
+                .iter()
+                .zip(a.args.iter())
+                .map(|((n, _), v)| (Rc::from(n.as_str()), v.clone()))
+                .collect();
             for n in &info.needs {
                 learn_from_needs(prog, tw, &mut known, &env, n);
             }
             for eff in &info.effects {
-                if let (Some(slot), Some(v)) = (slot_of(prog, tw, &known, &env, &eff.target), eval3(prog, tw, &known, &env, &eff.value)) {
+                if let (Some(slot), Some(v)) = (
+                    slot_of(prog, tw, &known, &env, &eff.target),
+                    eval3(prog, tw, &known, &env, &eff.value),
+                ) {
                     known.insert(slot, v);
                 }
             }
@@ -43,9 +53,15 @@ fn learn_from_needs(prog: &Program, tw: usize, known: &mut Known, env: &Env, e: 
             learn_from_needs(prog, tw, known, env, b);
         }
         ExprKind::Bin(BinOp::Eq, a, b) => {
-            if let (Some(s), Some(v)) = (slot_of(prog, tw, known, env, a), eval3(prog, tw, known, env, b)) {
+            if let (Some(s), Some(v)) = (
+                slot_of(prog, tw, known, env, a),
+                eval3(prog, tw, known, env, b),
+            ) {
                 known.insert(s, v);
-            } else if let (Some(s), Some(v)) = (slot_of(prog, tw, known, env, b), eval3(prog, tw, known, env, a)) {
+            } else if let (Some(s), Some(v)) = (
+                slot_of(prog, tw, known, env, b),
+                eval3(prog, tw, known, env, a),
+            ) {
                 known.insert(s, v);
             }
         }
@@ -68,7 +84,9 @@ fn learn_from_needs(prog: &Program, tw: usize, known: &mut Known, env: &Env, e: 
 fn slot_of(prog: &Program, tw: usize, known: &Known, env: &Env, e: &E) -> Option<usize> {
     let w = &prog.worlds[tw];
     match &e.kind {
-        ExprKind::Name(n) if env_get(env, n).is_none() && w.facts.contains_key(n) => w.slot_of.get(&(n.clone(), vec![])).copied(),
+        ExprKind::Name(n) if env_get(env, n).is_none() && w.facts.contains_key(n) => {
+            w.slot_of.get(&(n.clone(), vec![])).copied()
+        }
         ExprKind::Call(n, args) if w.facts.contains_key(n) => {
             let f = &w.facts[n];
             let mut vs = vec![];
@@ -95,7 +113,10 @@ fn literals(prog: &Program, tw: usize, env: &Env, e: &E, out: &mut Known) {
             }
         }
         ExprKind::Bin(BinOp::Eq, a, b) => {
-            if let (Some(s), Some(v)) = (slot_of(prog, tw, &empty, env, a), eval3(prog, tw, &empty, env, b)) {
+            if let (Some(s), Some(v)) = (
+                slot_of(prog, tw, &empty, env, a),
+                eval3(prog, tw, &empty, env, b),
+            ) {
                 out.insert(s, v);
             }
         }
@@ -108,7 +129,7 @@ fn literals(prog: &Program, tw: usize, env: &Env, e: &E, out: &mut Known) {
     }
 }
 
-fn with_conclusions(prog: &Program, tw: usize, st: &ForeignStore) -> Known {
+pub fn with_conclusions(prog: &Program, tw: usize, st: &ForeignStore) -> Known {
     let mut k = observed(prog, tw, st);
     for c in &st.active {
         if let Value::Formula(f) = &c.formula {
@@ -120,7 +141,11 @@ fn with_conclusions(prog: &Program, tw: usize, st: &ForeignStore) -> Known {
 
 pub fn believes(prog: &Program, tw: usize, st: &ForeignStore, env: &Env, e: &E) -> bool {
     let text = prog.text(e.span);
-    if st.active.iter().any(|c| matches!(&c.formula, Value::Formula(f) if prog.text(f.expr.span) == text)) {
+    if st
+        .active
+        .iter()
+        .any(|c| matches!(&c.formula, Value::Formula(f) if prog.text(f.expr.span) == text))
+    {
         return true;
     }
     let k = with_conclusions(prog, tw, st);
@@ -165,7 +190,9 @@ pub fn eval3(prog: &Program, tw: usize, known: &Known, env: &Env, e: &E) -> Opti
         ExprKind::Call(..) => known.get(&slot_of(prog, tw, known, env, e)?).cloned(),
         ExprKind::Index(g, i) => {
             let k = eval3(prog, tw, known, env, i)?.as_int()?;
-            w.agent_names.get(&format!("{}[{}]", g, k)).map(|a| Value::Agent(tw as u16, *a))
+            w.agent_names
+                .get(&format!("{}[{}]", g, k))
+                .map(|a| Value::Agent(tw as u16, *a))
         }
         ExprKind::Tuple(xs) => {
             let mut vs = vec![];
@@ -218,13 +245,18 @@ pub fn eval3(prog: &Program, tw: usize, known: &Known, env: &Env, e: &E) -> Opti
             let dom = domain_of(w, &t)?;
             let mut unknown = false;
             for v in dom {
-                match eval3(prog, tw, known, &env_with(env, var, v), body).and_then(|x| x.as_bool()) {
+                match eval3(prog, tw, known, &env_with(env, var, v), body).and_then(|x| x.as_bool())
+                {
                     Some(b) if b != *all => return Some(Value::Bool(!*all)),
                     Some(_) => {}
                     None => unknown = true,
                 }
             }
-            if unknown { None } else { Some(Value::Bool(*all)) }
+            if unknown {
+                None
+            } else {
+                Some(Value::Bool(*all))
+            }
         }
         _ => None,
     }

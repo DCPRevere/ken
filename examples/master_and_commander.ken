@@ -1,0 +1,136 @@
+# Master and Commander: The Far Side of the World (the 2003 film).
+#
+# HMS Surprise hunts the French privateer Acheron, a faster and stronger ship.
+# Jack Aubrey wins by making the French see what isn't there: lanterns on a
+# raft at night, then a warship dressed as a whaler. The French captain
+# answers in kind. Taken, he passes himself off as the ship's surgeon and
+# says the captain is dead. Stephen Maturin finds the hole in the story.
+#
+# Shows: watching (the French watch the Surprise's lights), appearances (what
+# the disguise makes the French see), mistaken identity (who "the surgeon" and
+# "the captain" are), and reasons for acting that must be in the actor's head.
+
+agent Aubrey, Maturin, Pullings, Hollom, Crew
+agent Capitaine, Prisoner                # the Acheron's captain; one of her men
+agent Dubois                             # her surgeon, dead of fever months ago
+type Bearing = north | south
+type Light = north_lights | south_lights | dark
+type Ship = surprise | whaler
+fact acheron_near: bool                  # in the fog bank, at the start
+fact surprise_at: Bearing                # where the Surprise really is, at night
+fact lights: Light                       # where the French see her lanterns
+fact rigged_as_whaler: bool = false
+fact sighted: Ship                       # what the Acheron has in sight
+fact taken: bool = false                 # the Acheron has struck
+fact captain: Agent in Capitaine, Dubois, Prisoner   # who commands the Acheron
+fact surgeon: Agent in Capitaine, Dubois, Prisoner   # who is her surgeon
+fact alive(Agent): bool = true
+fact jonah(Agent): bool = false          # a man who brings a ship bad luck
+
+action glimpse(x: Agent)                 # a shape in the fog, then nothing
+  seen by: x
+action attack(x: Agent)
+  needs:   acheron_near
+  seen by: everyone
+action slip_away(x: Agent, b: Bearing)   # lanterns out, new course
+  effect:  surprise_at = b, lights = dark
+  seen by: Aubrey, Maturin, Pullings, Hollom, Crew
+action light_raft(x: Agent)              # lit lanterns on a raft, where she was
+  effect:  lights = north_lights
+  seen by: Aubrey, Maturin, Pullings, Hollom, Crew
+action becalmed(x: Agent)                # no wind, no water, and Hollom aboard
+  seen by: everyone
+action show_insect(x: Agent, y: Agent)   # the stick insect that looks like a twig
+  seen by: x, y
+action disguise(x: Agent)                # false rig, guns hidden, a whaler's colours
+  effect:  rigged_as_whaler = true
+  seen by: Aubrey, Maturin, Pullings, Hollom, Crew, Prisoner
+action come_in_sight(x: Agent, s: Ship)
+  effect:  sighted = s
+  seen by: everyone
+  seen by: every a where rigged_as_whaler and (a = Capitaine) as come_in_sight(x, whaler)
+action board(x: Agent)
+  effect:  taken = true
+  seen by: everyone
+action part(x: Agent, y: Agent)          # Pullings takes the prize to Valparaiso
+  seen by: everyone
+action beat_to_quarters(x: Agent)
+  seen by: Aubrey, Maturin, Hollom, Crew
+
+timeline:
+  start:
+    acheron_near = true
+    surprise_at = north
+    lights = north_lights
+    sighted = surprise
+    captain = Capitaine
+    surgeon = Dubois
+    alive(Dubois) = false
+    honest(Capitaine) = false
+    seen by: Capitaine, Prisoner, Dubois
+    seen by: (Aubrey, Maturin, Pullings, Hollom, Crew) hiding acheron_near hiding captain hiding surgeon hiding alive(Dubois) hiding honest(Capitaine) hiding jonah(Hollom)
+    Capitaine watches lights
+
+  # Out of the fog
+  e1: glimpse(Hollom)
+        Hollom suspects acheron_near because e1
+  e2: attack(Capitaine)
+
+  # Night: the Surprise douses her lanterns and slips away, leaving lit ones on a raft
+  n1: slip_away(Aubrey, south) then light_raft(Aubrey)
+        Capitaine concludes surprise_at = north because Capitaine believes lights = north_lights
+
+  # Becalmed, the crew look for someone to blame
+  c1: becalmed(Crew)
+        Crew suspects jonah(Hollom) because c1
+
+  # The stick insect gives Aubrey an idea: dress the Surprise as a whaler
+  p1: show_insect(Maturin, Aubrey)
+        Aubrey wants Capitaine believes sighted = whaler
+  p2: disguise(Aubrey) because Aubrey wants Capitaine believes sighted = whaler
+  p3: come_in_sight(Aubrey, surprise) so that Capitaine believes sighted = whaler
+  p4: board(Aubrey)
+
+  # "I am the surgeon. The captain is dead."
+  b1: tell(Capitaine, Aubrey, surgeon = Capitaine and not alive(captain))
+        seen by: Capitaine, Aubrey, Maturin, Pullings   # the prisoners are below
+  b2: part(Aubrey, Pullings)
+
+  # Maturin learns the truth, and Aubrey turns back
+  r1: tell(Prisoner, Maturin, not alive(surgeon))
+        Maturin concludes not alive(surgeon) because r1   # so who was the "surgeon"?
+  r2: tell(Maturin, Aubrey, not alive(surgeon))
+        Aubrey concludes captain = Capitaine because r2
+        Aubrey concludes not honest(Capitaine) because r2
+  r3: beat_to_quarters(Aubrey) because captain = Capitaine and alive(Capitaine)
+
+expect at e1:
+  Hollom suspects acheron_near           # he thinks he saw something
+  not (Hollom believes acheron_near)     # but he can't be sure
+  not (Aubrey believes acheron_near)
+expect at e2:
+  common knowledge: acheron_near
+expect at n1:
+  Capitaine believes surprise_at = north # still chasing the lights
+  surprise_at = south
+  Aubrey knows surprise_at = south
+expect at c1:
+  Crew suspects jonah(Hollom)            # superstition
+  not jonah(Hollom)
+expect at p3:
+  Capitaine believes sighted = whaler    # the disguise works
+  sighted = surprise
+  Aubrey knows (Capitaine believes sighted = whaler)
+expect at b1:
+  Aubrey believes surgeon = Capitaine    # mistaken identity
+  Aubrey believes not (captain = Capitaine)
+  Pullings believes not alive(captain)
+  Prisoner knows captain = Capitaine
+expect at r1:
+  Maturin believes not (surgeon = Capitaine)
+  Aubrey believes surgeon = Capitaine    # not told yet
+expect at r3:
+  Aubrey believes captain = Capitaine
+  Aubrey believes not honest(Capitaine)
+  Pullings believes surgeon = Capitaine  # still fooled, with the captain aboard
+  not (Capitaine knows (Aubrey believes captain = Capitaine))

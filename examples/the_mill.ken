@@ -1,0 +1,66 @@
+# The Mill: an original locked-room puzzle.
+#
+# The inspector steps out of the mill. While he is away, Ada slips in and takes
+# the ledger, not knowing that Ben is in the loft. The inspector returns to find
+# it gone: anyone at the mill could have taken it, and he never saw who was
+# there. Ada blames the miller, hoping he'll believe it; he doesn't, because a
+# careful reasoner doesn't take an unchecked word. Then Ben speaks.
+
+use space
+
+agent Inspector : logician
+agent Ada, Ben, Miller
+type Place = mill | inn | farm
+fact ledger: bool = true                 # on the miller's desk
+fact took(Agent): bool = false
+
+action take(x: Agent)
+  needs:   ledger and space.at(x) = mill
+  effect:  ledger = false, took(x) = true
+  seen by: x, every a where space.at(a) = mill
+  may happen unseen                      # it could happen while you're out
+action search(x: Agent)
+  seen by: x
+
+timeline:
+  start @ 0:
+    space.at(Inspector) = mill
+    space.at(Ada) = farm
+    space.at(Ben) = mill
+    space.at(Miller) = inn
+    space.distance(mill, inn) = 20
+    space.distance(inn, farm) = 10
+    space.distance(mill, farm) = 25
+    honest(Ada) = false
+    seen by: Ada, Ben, Miller
+    seen by: Inspector hiding space.at(Ada) hiding space.at(Ben) hiding space.at(Miller) hiding honest(Ada)
+    Ada wants Inspector believes took(Miller)
+  e1 @ 20: space.go(Inspector, inn)
+  e2 @ 30: space.go(Ada, mill)
+        seen by: Ada
+        seen by: Ben secretly            # from the loft
+  e3 @ 31: take(Ada)
+        seen by: Ada
+        seen by: Ben secretly            # from the loft
+        Ben suspects not honest(Ada) because e3
+  e4 @ 56: space.go(Ada, farm)
+  e5 @ 60: space.go(Inspector, mill)
+  e6 @ 61: search(Inspector)
+        Inspector concludes not ledger because e6
+  e7 @ 62: tell(Ada, Inspector, took(Miller)) so that Inspector believes took(Miller)
+  e8 @ 70: announce(Ben, took(Ada))
+
+expect at e1:
+  Inspector knows ledger                 # it was there when he left
+expect at e3:
+  Ben knows took(Ada)
+  not (Ada believes (Ben knows took(Ada)))   # she thinks nobody saw
+expect at e6:
+  Inspector knows not ledger
+  not (Inspector knows took(Ada))        # anyone at the mill could have done it
+  not (Inspector knows not took(Miller))
+expect at e7:
+  not (Inspector believes took(Miller))  # Ada's lie doesn't land
+  Ben suspects not honest(Ada)
+expect at e8:
+  Inspector knows took(Ada)

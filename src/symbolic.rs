@@ -60,31 +60,99 @@ pub fn eligible(prog: &Program, wid: usize) -> Result<(), String> {
         return Err("it is about another world".into());
     }
     for o in &prog.worlds {
-        if o.id != wid && (o.about.contains(&wid) || o.agents.iter().any(|a| a.sees_all_of == Some(wid)) || o.revises.as_ref().map(|r| r.0) == Some(wid)) {
+        if o.id != wid
+            && (o.about.contains(&wid)
+                || o.agents.iter().any(|a| a.sees_all_of == Some(wid))
+                || o.revises.as_ref().map(|r| r.0) == Some(wid))
+        {
             return Err(format!("world {} refers to it", o.name));
         }
     }
     for r in &w.rules {
         if !matches!((&r.trigger, &r.then), (Trigger::After(_), RuleThen::Do(_))) {
-            return Err(format!("rule {} concludes or depends on what someone sees", r.name));
+            return Err(format!(
+                "rule {} concludes or depends on what someone sees",
+                r.name
+            ));
         }
+    }
+    if w.actions.values().any(|a| a.unseen) {
+        return Err("an action may happen unseen".into());
+    }
+    if w.actions.values().any(|a| {
+        a.seen_by
+            .iter()
+            .flatten()
+            .any(|it| it.mods.iter().any(|m| matches!(m, Modifier::As(_))))
+    }) {
+        return Err("an action looks like something else to some observers".into());
+    }
+    let done: Vec<&str> = w
+        .rules
+        .iter()
+        .filter_map(|r| match &r.then {
+            RuleThen::Do(c) => Some(c.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if w.rules
+        .iter()
+        .any(|r| matches!(&r.trigger, Trigger::After(p) if done.contains(&p.name.as_str())))
+    {
+        return Err("a rule is triggered by another rule's action".into());
     }
     for (t, st) in w.steps.iter().enumerate() {
         if !st.conclusions.is_empty() {
             return Err(format!("{} has conclusions", st.label));
         }
+        if !st.wants.is_empty()
+            || !st.suspicions.is_empty()
+            || !st.forgets.is_empty()
+            || !st.watches.is_empty()
+            || st.purpose.is_some()
+        {
+            return Err(format!(
+                "{} has wants, suspicions, forgetting, watching or `so that`",
+                st.label
+            ));
+        }
         if t > 0 && st.seen_by.is_some() {
             return Err(format!("{} has its own `seen by`", st.label));
         }
-        if st.actions.iter().any(|c| c.name == "tell") {
-            return Err(format!("{} uses tell", st.label));
+        // a private saying (one not everyone hears) needs the explicit engine
+        let saying = |n: &str| {
+            w.actions
+                .get(n)
+                .map(|a| {
+                    let says = matches!(a.params.first(), Some((_, Ty::Group(_)))) && a.params.iter().any(|(p, t)| p == "content" && *t == Ty::Content);
+                    let public = matches!(a.seen_by.as_deref(), Some([SeenItem { who: Who::Everyone, mods }]) if mods.is_empty());
+                    says && !public
+                })
+                .unwrap_or(false)
+        };
+        if st.actions.iter().any(|c| saying(&c.name)) {
+            return Err(format!("{} has someone say something", st.label));
+        }
+        // people (not logicians) take public sayings as testimony, which only the
+        // explicit engine models; the speaker themself doesn't count
+        for c in &st.actions {
+            let says = w.actions.get(&c.name).map(|a| matches!(a.params.first(), Some((_, Ty::Group(_)))) && a.params.iter().any(|(p, t)| p == "content" && *t == Ty::Content)).unwrap_or(false);
+            if !says {
+                continue;
+            }
+            let speaker = c.args.first().and_then(|e| if let ExprKind::Name(n) = &e.kind { Some(n.as_str()) } else { None });
+            if w.agents.iter().any(|a| a.mode == Mode::Person && Some(a.name.as_str()) != speaker) {
+                return Err(format!("{}: a person hears someone say something", st.label));
+            }
         }
         if t == 0 {
             for it in st.seen_by.iter().flatten() {
                 for m in &it.mods {
                     match m {
                         Modifier::Hiding(e) if !matches!(e.kind, ExprKind::Field(..)) => {}
-                        _ => return Err("start uses `as`, `secretly` or hides part of a fact".into()),
+                        _ => {
+                            return Err("start uses `as`, `secretly` or hides part of a fact".into())
+                        }
                     }
                 }
             }
@@ -97,8 +165,12 @@ impl<'a> Sym<'a> {
     pub fn run(prog: &'a Program, wid: usize, hub: &dyn Hub) -> SR<Sym<'a>> {
         eligible(prog, wid).map_err(Fallback)?;
         let world = &prog.worlds[wid];
-        let runner = Runner { prog, wid, hub, seg_beliefs: HashMap::new(), suppress: None };
-        let InitState { truth, obs, varying } = runner.initial_state().map_err(Error)?;
+        let runner = Runner::new(prog, wid, hub, HashMap::new(), None);
+        let InitState {
+            truth,
+            obs,
+            varying,
+        } = runner.initial_state().map_err(Error)?;
         let mut bdd = Bdd::new();
         let mut bits: HashMap<usize, Vec<u32>> = HashMap::new();
         let mut next: u32 = 0;
@@ -139,16 +211,41 @@ impl<'a> Sym<'a> {
             single.push(if hv.len() == 1 { Some(hv[0]) } else { None });
             hidden.push(bdd.var_set(&hv));
         }
-        let mut sym = Sym { prog, wid, bdd, bits, hidden, single, assign, theta, vals: truth, snaps: vec![], diags: vec![], gc_floor: 0, fast: std::env::var("KEN_NO_SHORTCUTS").is_err() };
-        sym.snaps.push(SymSnap { theta: sym.theta, vals: Rc::new(sym.vals.clone()) });
+        let mut sym = Sym {
+            prog,
+            wid,
+            bdd,
+            bits,
+            hidden,
+            single,
+            assign,
+            theta,
+            vals: truth,
+            snaps: vec![],
+            diags: vec![],
+            gc_floor: 0,
+            fast: std::env::var("KEN_NO_SHORTCUTS").is_err(),
+        };
+        sym.snaps.push(SymSnap {
+            theta: sym.theta,
+            vals: Rc::new(sym.vals.clone()),
+        });
         let timing = std::env::var("KEN_TIMING").is_ok();
         for t in 1..world.steps.len() {
             let t0 = std::time::Instant::now();
             sym.step(t)?;
             if timing {
-                eprintln!("step {:>12} {:>8.1}ms  nodes {}", world.steps[t].label, t0.elapsed().as_secs_f64() * 1e3, sym.bdd.node_count());
+                eprintln!(
+                    "step {:>12} {:>8.1}ms  nodes {}",
+                    world.steps[t].label,
+                    t0.elapsed().as_secs_f64() * 1e3,
+                    sym.bdd.node_count()
+                );
             }
-            sym.snaps.push(SymSnap { theta: sym.theta, vals: Rc::new(sym.vals.clone()) });
+            sym.snaps.push(SymSnap {
+                theta: sym.theta,
+                vals: Rc::new(sym.vals.clone()),
+            });
             sym.maybe_gc();
         }
         Ok(sym)
@@ -175,7 +272,13 @@ impl<'a> Sym<'a> {
 
     fn diag(&mut self, t: usize, msg: String) {
         let w = self.world();
-        self.diags.push(Diag { level: Level::Error, line: w.steps[t].span.line, world: w.name.clone(), at: Some(w.steps[t].label.clone()), msg });
+        self.diags.push(Diag {
+            level: Level::Error,
+            line: w.steps[t].span.line,
+            world: w.name.clone(),
+            at: Some(w.steps[t].label.clone()),
+            msg,
+        });
     }
 
     fn holds(&self, f: B) -> bool {
@@ -184,20 +287,34 @@ impl<'a> Sym<'a> {
 
     fn instantiate(&mut self, c: &Call, env: &Env) -> SR<ActionInst> {
         let w = self.world();
-        let info = w.actions.get(&c.name).ok_or_else(|| Error(format!("unknown action '{}'", c.name)))?;
+        let info = w
+            .actions
+            .get(&c.name)
+            .ok_or_else(|| Error(format!("unknown action '{}'", c.name)))?;
         if info.params.len() != c.args.len() {
-            return Err(Error(format!("{} takes {} argument(s)", c.name, info.params.len())));
+            return Err(Error(format!(
+                "{} takes {} argument(s)",
+                c.name,
+                info.params.len()
+            )));
         }
         let mut args = vec![];
         for ((_, ty), e) in info.params.iter().zip(c.args.iter()) {
             if *ty == Ty::Content {
-                args.push(Value::Formula(Rc::new(FormulaVal { expr: e.clone(), env: env.clone(), world: self.wid })));
+                args.push(Value::Formula(Rc::new(FormulaVal {
+                    expr: e.clone(),
+                    env: env.clone(),
+                    world: self.wid,
+                })));
             } else {
                 let v = self.concrete(e, env)?;
                 args.push(coerce(w, ty, v));
             }
         }
-        Ok(ActionInst { name: Rc::from(c.name.as_str()), args })
+        Ok(ActionInst {
+            name: Rc::from(c.name.as_str()),
+            args,
+        })
     }
 
     fn concrete(&mut self, e: &E, env: &Env) -> SR<Value> {
@@ -214,20 +331,36 @@ impl<'a> Sym<'a> {
         };
         match live.len() {
             1 => Ok(live.into_iter().next().unwrap()),
-            0 => Err(Error(format!("`{}` has no possible value", self.prog.text(e.span)))),
-            _ => Err(Fallback(format!("`{}` differs between possible worlds", self.prog.text(e.span)))),
+            0 => Err(Error(format!(
+                "`{}` has no possible value",
+                self.prog.text(e.span)
+            ))),
+            _ => Err(Fallback(format!(
+                "`{}` differs between possible worlds",
+                self.prog.text(e.span)
+            ))),
         }
     }
 
     fn action_env(&self, a: &ActionInst) -> Env {
         let info = &self.world().actions[&*a.name];
-        info.params.iter().zip(a.args.iter()).map(|((n, _), v)| (Rc::from(n.as_str()), v.clone())).collect()
+        info.params
+            .iter()
+            .zip(a.args.iter())
+            .map(|((n, _), v)| (Rc::from(n.as_str()), v.clone()))
+            .collect()
     }
 
     fn require_public(&self, a: &ActionInst) -> SR<()> {
         let info = &self.world().actions[&*a.name];
         match &info.seen_by {
-            Some(items) if items.len() == 1 && matches!(items[0].who, Who::Everyone) && items[0].mods.is_empty() => Ok(()),
+            Some(items)
+                if items.len() == 1
+                    && matches!(items[0].who, Who::Everyone)
+                    && items[0].mods.is_empty() =>
+            {
+                Ok(())
+            }
             _ => Err(Fallback(format!("{} is not seen by everyone", a.name))),
         }
     }
@@ -239,7 +372,9 @@ impl<'a> Sym<'a> {
         for eff in &info.effects.clone() {
             let slot = self.slot_of(&eff.target, &env)?;
             if self.bits.contains_key(&slot) {
-                return Err(Fallback("an event changes a fact that differs between possible worlds".into()));
+                return Err(Fallback(
+                    "an event changes a fact that differs between possible worlds".into(),
+                ));
             }
             let v = self.concrete(&eff.value, &env)?;
             self.vals[slot] = coerce(w, &w.facts[&w.slots[slot].fact].ty, v);
@@ -254,13 +389,19 @@ impl<'a> Sym<'a> {
             ExprKind::Call(n, a) => (n, a.clone()),
             _ => return Err(Error(format!("'{}' is not a fact", self.prog.text(e.span)))),
         };
-        let f = w.facts.get(name).ok_or_else(|| Error(format!("unknown fact '{}'", name)))?;
+        let f = w
+            .facts
+            .get(name)
+            .ok_or_else(|| Error(format!("unknown fact '{}'", name)))?;
         let mut vs = vec![];
         for (a, t) in args.iter().zip(f.params.clone().iter()) {
             let v = self.concrete(a, env)?;
             vs.push(coerce(w, t, v));
         }
-        w.slot_of.get(&(name.clone(), vs)).copied().ok_or_else(|| Error(format!("'{}' is not a valid fact", self.prog.text(e.span))))
+        w.slot_of
+            .get(&(name.clone(), vs))
+            .copied()
+            .ok_or_else(|| Error(format!("'{}' is not a valid fact", self.prog.text(e.span))))
     }
 
     fn step(&mut self, t: usize) -> SR<()> {
@@ -272,10 +413,15 @@ impl<'a> Sym<'a> {
             self.require_public(&a)?;
             actions.push(a);
         }
-        if let Some(b) = &st.because {
-            let f = self.form(b, &st.env)?;
+        for r in &st.reasons {
+            if let Some(msg) = crate::engine::reason_problem(self.prog, st, r) {
+                self.diag(t, msg);
+                continue;
+            }
+            let f = self.form(&r.check, &st.env)?;
             if !self.holds(f) {
-                self.diag(t, format!("this happens because `{}`, but that isn't true just before {}", self.prog.text(b.span), st.label));
+                let msg = crate::engine::reason_failed(self.prog, st, r);
+                self.diag(t, msg);
             }
         }
         // public preconditions: everyone learns they held
@@ -286,7 +432,14 @@ impl<'a> Sym<'a> {
             for n in &info.needs {
                 let f = self.form(n, &env)?;
                 if !self.holds(f) {
-                    self.diag(t, format!("{} needs `{}`, which is false here", self.prog.show_action(act), self.prog.text(n.span)));
+                    self.diag(
+                        t,
+                        format!(
+                            "{} needs `{}`, which is false here",
+                            self.prog.show_action(act),
+                            self.prog.text(n.span)
+                        ),
+                    );
                 } else {
                     pres.push(f);
                 }
@@ -304,11 +457,21 @@ impl<'a> Sym<'a> {
         // "i knows their own hidden bit": those who didn't act are combined in one pass
         let mut still: Vec<u32> = vec![];
         for r in &w.rules {
-            let (Trigger::After(pat), RuleThen::Do(call)) = (&r.trigger, &r.then) else { continue };
+            let (Trigger::After(pat), RuleThen::Do(call)) = (&r.trigger, &r.then) else {
+                continue;
+            };
             for act in &actions {
-                let Some(env) = self.match_pattern(pat, act)? else { continue };
+                let Some(env) = self.match_pattern(pat, act)? else {
+                    continue;
+                };
                 let envs: Vec<Env> = match &r.for_every {
-                    Some((g, var)) => w.groups.get(g).ok_or_else(|| Error(format!("unknown group '{}'", g)))?.iter().map(|a| env_with(&env, var, Value::Agent(self.wid as u16, *a))).collect(),
+                    Some((g, var)) => w
+                        .groups
+                        .get(g)
+                        .ok_or_else(|| Error(format!("unknown group '{}'", g)))?
+                        .iter()
+                        .map(|a| env_with(&env, var, Value::Agent(self.wid as u16, *a)))
+                        .collect(),
                     None => vec![env],
                 };
                 for e2 in envs {
@@ -358,7 +521,12 @@ impl<'a> Sym<'a> {
             }
         }
         if std::env::var("KEN_TIMING").is_ok() && !fired.is_empty() {
-            eprintln!("   conditions {:.1}ms  theta-updates {:.1}ms  |theta|={}", t_cond.as_secs_f64() * 1e3, tt.elapsed().as_secs_f64() * 1e3, self.size(self.theta));
+            eprintln!(
+                "   conditions {:.1}ms  theta-updates {:.1}ms  |theta|={}",
+                t_cond.as_secs_f64() * 1e3,
+                tt.elapsed().as_secs_f64() * 1e3,
+                self.size(self.theta)
+            );
         }
         for (call, env) in triggered {
             let act = self.instantiate(&call, &env)?;
@@ -368,7 +536,14 @@ impl<'a> Sym<'a> {
             for n in &info.needs {
                 let f = self.form(n, &aenv)?;
                 if !self.holds(f) {
-                    self.diag(t, format!("{} needs `{}`, which is false here", self.prog.show_action(&act), self.prog.text(n.span)));
+                    self.diag(
+                        t,
+                        format!(
+                            "{} needs `{}`, which is false here",
+                            self.prog.show_action(&act),
+                            self.prog.text(n.span)
+                        ),
+                    );
                 }
             }
             self.apply_effects(&act)?;
@@ -384,7 +559,10 @@ impl<'a> Sym<'a> {
         let mut env: Env = vec![];
         for (p, v) in pat.args.iter().zip(act.args.iter()) {
             if let ExprKind::Name(n) = &p.kind {
-                let bound = w.facts.contains_key(n) || w.agent_names.contains_key(n) || w.consts.contains_key(n) || self.prog.params.contains_key(n);
+                let bound = w.facts.contains_key(n)
+                    || w.agent_names.contains_key(n)
+                    || w.consts.contains_key(n)
+                    || self.prog.params.contains_key(n);
                 if !bound {
                     match env_get(&env, n) {
                         Some(prev) if prev != v => return Ok(None),
@@ -412,13 +590,25 @@ impl<'a> Sym<'a> {
     fn knows_own_bit(&mut self, cond: &E, env: &Env) -> SR<Option<(u32, B)>> {
         let (k, rest) = match &cond.kind {
             ExprKind::Epistemic { .. } => (cond, None),
-            ExprKind::Bin(BinOp::And, a, b) if matches!(a.kind, ExprKind::Epistemic { .. }) && !has_beliefs(b) => (a, Some(b)),
-            ExprKind::Bin(BinOp::And, a, b) if matches!(b.kind, ExprKind::Epistemic { .. }) && !has_beliefs(a) => (b, Some(a)),
+            ExprKind::Bin(BinOp::And, a, b)
+                if matches!(a.kind, ExprKind::Epistemic { .. }) && !has_beliefs(b) =>
+            {
+                (a, Some(b))
+            }
+            ExprKind::Bin(BinOp::And, a, b)
+                if matches!(b.kind, ExprKind::Epistemic { .. }) && !has_beliefs(a) =>
+            {
+                (b, Some(a))
+            }
             _ => return Ok(None),
         };
-        let ExprKind::Epistemic { agent, mode, body } = &k.kind else { return Ok(None) };
+        let ExprKind::Epistemic { agent, mode, body } = &k.kind else {
+            return Ok(None);
+        };
         let a = self.agent(agent, env)?;
-        let Some(x) = self.single[a as usize] else { return Ok(None) };
+        let Some(x) = self.single[a as usize] else {
+            return Ok(None);
+        };
         let slot = match &body.kind {
             ExprKind::Name(_) | ExprKind::Call(..) => match self.slot_of(body, env) {
                 Ok(s) => s,
@@ -431,7 +621,8 @@ impl<'a> Sym<'a> {
         }
         let is_bool = self.world().slots[slot].domain.first() == Some(&Value::Bool(false));
         // knowing the value: `knows <non-bool fact>` or `knows whether <bool fact>`
-        let value_knowledge = (*mode == KMode::Knows && !is_bool) || (*mode == KMode::KnowsWhether && is_bool);
+        let value_knowledge =
+            (*mode == KMode::Knows && !is_bool) || (*mode == KMode::KnowsWhether && is_bool);
         if !value_knowledge {
             return Ok(None);
         }
@@ -488,7 +679,11 @@ impl<'a> Sym<'a> {
     fn agent(&mut self, e: &E, env: &Env) -> SR<u32> {
         match self.concrete(e, env)? {
             Value::Agent(w, a) if w as usize == self.wid => Ok(a),
-            v => Err(Error(format!("'{}' is {}, not an agent", self.prog.text(e.span), self.prog.show(&v)))),
+            v => Err(Error(format!(
+                "'{}' is {}, not an agent",
+                self.prog.text(e.span),
+                self.prog.show(&v)
+            ))),
         }
     }
 
@@ -498,7 +693,12 @@ impl<'a> Sym<'a> {
             match v {
                 Value::Bool(true) => f = self.bdd.or(f, c),
                 Value::Bool(false) => {}
-                other => return Err(Error(format!("{} is not true or false", self.prog.show(&other)))),
+                other => {
+                    return Err(Error(format!(
+                        "{} is not true or false",
+                        self.prog.show(&other)
+                    )))
+                }
             }
         }
         Ok(f)
@@ -513,14 +713,22 @@ impl<'a> Sym<'a> {
             }
             ExprKind::Bin(op @ (BinOp::And | BinOp::Or), a, b) => {
                 // cheap side first; skip the other when it decides the answer
-                let (first, second) = if has_beliefs(a) && !has_beliefs(b) { (b, a) } else { (a, b) };
+                let (first, second) = if has_beliefs(a) && !has_beliefs(b) {
+                    (b, a)
+                } else {
+                    (a, b)
+                };
                 let x = self.form(first, env)?;
                 let decided = if *op == BinOp::And { FALSE } else { TRUE };
                 if x == decided {
                     return Ok(decided);
                 }
                 let y = self.form(second, env)?;
-                Ok(if *op == BinOp::And { self.bdd.and(x, y) } else { self.bdd.or(x, y) })
+                Ok(if *op == BinOp::And {
+                    self.bdd.and(x, y)
+                } else {
+                    self.bdd.or(x, y)
+                })
             }
             ExprKind::Bin(op @ (BinOp::Implies | BinOp::Iff), a, b) => {
                 let x = self.form(a, env)?;
@@ -537,12 +745,18 @@ impl<'a> Sym<'a> {
             }
             ExprKind::Quant { all, var, ty, body } => {
                 let w = self.world();
-                let t = resolve_ty(w, ty, &self.prog.params, e.span.line).map_err(|x| Error(x.1))?;
-                let dom = domain_of(w, &t).ok_or_else(|| Error("that type has no finite domain".into()))?;
+                let t =
+                    resolve_ty(w, ty, &self.prog.params, e.span.line).map_err(|x| Error(x.1))?;
+                let dom = domain_of(w, &t)
+                    .ok_or_else(|| Error("that type has no finite domain".into()))?;
                 let mut acc = if *all { TRUE } else { FALSE };
                 for v in dom {
                     let f = self.form(body, &env_with(env, var, v))?;
-                    acc = if *all { self.bdd.and(acc, f) } else { self.bdd.or(acc, f) };
+                    acc = if *all {
+                        self.bdd.and(acc, f)
+                    } else {
+                        self.bdd.or(acc, f)
+                    };
                 }
                 Ok(acc)
             }
@@ -574,7 +788,11 @@ impl<'a> Sym<'a> {
             ExprKind::Common { group, body } => {
                 let w = self.world();
                 let members: Vec<u32> = match group {
-                    Some(g) => w.groups.get(g).cloned().ok_or_else(|| Error(format!("unknown group '{}'", g)))?,
+                    Some(g) => w
+                        .groups
+                        .get(g)
+                        .cloned()
+                        .ok_or_else(|| Error(format!("unknown group '{}'", g)))?,
                     None => w.groups["Agent"].clone(),
                 };
                 let f = self.form(body, env)?;
@@ -602,8 +820,15 @@ impl<'a> Sym<'a> {
             }
             ExprKind::At(inner, t) => {
                 let s = self.local_step(t)?;
-                let snap = self.snaps.get(s).cloned().ok_or_else(|| Error("that time hasn't been reached".into()))?;
-                let (th, vs) = (self.theta, std::mem::replace(&mut self.vals, (*snap.vals).clone()));
+                let snap = self
+                    .snaps
+                    .get(s)
+                    .cloned()
+                    .ok_or_else(|| Error("that time hasn't been reached".into()))?;
+                let (th, vs) = (
+                    self.theta,
+                    std::mem::replace(&mut self.vals, (*snap.vals).clone()),
+                );
                 self.theta = snap.theta;
                 let r = self.form(inner, env);
                 self.theta = th;
@@ -611,7 +836,9 @@ impl<'a> Sym<'a> {
                 let f = r?;
                 Ok(if self.holds(f) { TRUE } else { FALSE })
             }
-            ExprKind::Saw { .. } | ExprKind::SeenAs { .. } => Err(Fallback("`saw` needs the explicit engine".into())),
+            ExprKind::Saw { .. } | ExprKind::SeenAs { .. } => {
+                Err(Fallback("`saw` needs the explicit engine".into()))
+            }
             _ => {
                 let d = self.term(e, env)?;
                 self.truth_of(d)
@@ -624,17 +851,37 @@ impl<'a> Sym<'a> {
         Ok(match t {
             TimeRef::Start => 0,
             TimeRef::End => w.steps.len() - 1,
-            TimeRef::Before(inner) => self.local_step(inner)?.checked_sub(1).ok_or_else(|| Error("nothing comes before start".into()))?,
-            TimeRef::Event { world: None, label, args } => {
+            TimeRef::Before(inner) => self
+                .local_step(inner)?
+                .checked_sub(1)
+                .ok_or_else(|| Error("nothing comes before start".into()))?,
+            TimeRef::Event {
+                world: None,
+                label,
+                args,
+            } => {
                 let label = if args.is_empty() {
                     label.clone()
                 } else {
-                    let vs = args.iter().map(|a| const_int(a, &self.prog.params, &vec![]).map(|x| x.to_string()).map_err(|e| Error(e.1))).collect::<SR<Vec<_>>>()?;
+                    let vs = args
+                        .iter()
+                        .map(|a| {
+                            const_int(a, &self.prog.params, &vec![])
+                                .map(|x| x.to_string())
+                                .map_err(|e| Error(e.1))
+                        })
+                        .collect::<SR<Vec<_>>>()?;
                     format!("{}({})", label, vs.join(", "))
                 };
-                *w.label_index.get(&label).ok_or_else(|| Error(format!("no event '{}'", label)))?
+                *w.label_index
+                    .get(&label)
+                    .ok_or_else(|| Error(format!("no event '{}'", label)))?
             }
-            _ => return Err(Fallback("references to other worlds need the explicit engine".into())),
+            _ => {
+                return Err(Fallback(
+                    "references to other worlds need the explicit engine".into(),
+                ))
+            }
         })
     }
 
@@ -658,7 +905,11 @@ impl<'a> Sym<'a> {
                     return c(Value::Int(*v));
                 }
                 if w.facts.contains_key(n) {
-                    let s = w.slot_of.get(&(n.clone(), vec![])).copied().ok_or_else(|| Error(format!("'{}' takes arguments", n)))?;
+                    let s = w
+                        .slot_of
+                        .get(&(n.clone(), vec![]))
+                        .copied()
+                        .ok_or_else(|| Error(format!("'{}' takes arguments", n)))?;
                     return Ok(self.slot_dist(s));
                 }
                 if let Some(a) = w.agent_names.get(n) {
@@ -673,9 +924,17 @@ impl<'a> Sym<'a> {
                 Err(Error(format!("unknown name '{}'", n)))
             }
             ExprKind::Call(n, args) => {
-                let f = w.facts.get(n).ok_or_else(|| Error(format!("unknown fact '{}'", n)))?.clone();
+                let f = w
+                    .facts
+                    .get(n)
+                    .ok_or_else(|| Error(format!("unknown fact '{}'", n)))?
+                    .clone();
                 if f.params.len() != args.len() {
-                    return Err(Error(format!("'{}' takes {} argument(s)", n, f.params.len())));
+                    return Err(Error(format!(
+                        "'{}' takes {} argument(s)",
+                        n,
+                        f.params.len()
+                    )));
                 }
                 let mut combos: Vec<(Vec<Value>, B)> = vec![(vec![], TRUE)];
                 for (a, t) in args.iter().zip(f.params.iter()) {
@@ -696,7 +955,9 @@ impl<'a> Sym<'a> {
                 }
                 let mut out: Dist = vec![];
                 for (vs, cc) in combos {
-                    let s = *w.slot_of.get(&(n.clone(), vs)).ok_or_else(|| Error(format!("'{}' is not a valid fact", self.prog.text(e.span))))?;
+                    let s = *w.slot_of.get(&(n.clone(), vs)).ok_or_else(|| {
+                        Error(format!("'{}' is not a valid fact", self.prog.text(e.span)))
+                    })?;
                     for (v, c2) in self.slot_dist(s) {
                         let cond = self.bdd.and(cc, c2);
                         out.push((v, cond));
@@ -707,17 +968,27 @@ impl<'a> Sym<'a> {
             ExprKind::Index(g, i) => match self.concrete(i, env)? {
                 Value::Int(k) => {
                     let nm = format!("{}[{}]", g, k);
-                    w.agent_names.get(&nm).map(|a| vec![(Value::Agent(self.wid as u16, *a), TRUE)]).ok_or_else(|| Error(format!("no agent {}", nm)))
+                    w.agent_names
+                        .get(&nm)
+                        .map(|a| vec![(Value::Agent(self.wid as u16, *a), TRUE)])
+                        .ok_or_else(|| Error(format!("no agent {}", nm)))
                 }
                 _ => Err(Error("an index must be a number".into())),
             },
             ExprKind::Field(b, f) => {
                 let ty = match &b.kind {
-                    ExprKind::Name(n) | ExprKind::Call(n, _) => w.facts.get(n).map(|x| x.ty.clone()),
+                    ExprKind::Name(n) | ExprKind::Call(n, _) => {
+                        w.facts.get(n).map(|x| x.ty.clone())
+                    }
                     _ => None,
                 };
-                let Some(Ty::Record(_, fs)) = ty else { return Err(Error(format!("'{}' has no fields", self.prog.text(b.span)))) };
-                let i = fs.iter().position(|(n, _)| n == f).ok_or_else(|| Error(format!("no field '{}'", f)))?;
+                let Some(Ty::Record(_, fs)) = ty else {
+                    return Err(Error(format!("'{}' has no fields", self.prog.text(b.span))));
+                };
+                let i = fs
+                    .iter()
+                    .position(|(n, _)| n == f)
+                    .ok_or_else(|| Error(format!("no field '{}'", f)))?;
                 let d = self.term(b, env)?;
                 let out = d
                     .into_iter()
@@ -745,16 +1016,33 @@ impl<'a> Sym<'a> {
                     }
                     combos = next;
                 }
-                Ok(combos.into_iter().map(|(vs, cc)| (Value::Tuple(vs.into()), cc)).collect())
+                Ok(combos
+                    .into_iter()
+                    .map(|(vs, cc)| (Value::Tuple(vs.into()), cc))
+                    .collect())
             }
             ExprKind::Neg(a) => {
                 let d = self.term(a, env)?;
-                d.into_iter().map(|(v, cc)| match v {
-                    Value::Int(n) => Ok((Value::Int(-n), cc)),
-                    _ => Err(Error("expected a number".into())),
-                }).collect()
+                d.into_iter()
+                    .map(|(v, cc)| match v {
+                        Value::Int(n) => Ok((Value::Int(-n), cc)),
+                        _ => Err(Error("expected a number".into())),
+                    })
+                    .collect()
             }
-            ExprKind::Bin(op @ (BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) => {
+            ExprKind::Bin(
+                op @ (BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge
+                | BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul),
+                a,
+                b,
+            ) => {
                 let x = self.term(a, env)?;
                 let y = self.term(b, env)?;
                 let mut out: Dist = vec![];
@@ -768,7 +1056,9 @@ impl<'a> Sym<'a> {
                             BinOp::Eq => Value::Bool(v1 == v2),
                             BinOp::Ne => Value::Bool(v1 != v2),
                             _ => {
-                                let (Value::Int(p), Value::Int(q)) = (v1, v2) else { return Err(Error("expected numbers".into())) };
+                                let (Value::Int(p), Value::Int(q)) = (v1, v2) else {
+                                    return Err(Error("expected numbers".into()));
+                                };
                                 match op {
                                     BinOp::Lt => Value::Bool(p < q),
                                     BinOp::Le => Value::Bool(p <= q),
@@ -785,7 +1075,9 @@ impl<'a> Sym<'a> {
                 }
                 Ok(self.merge(out))
             }
-            ExprKind::Qualified(..) => Err(Fallback("references to other worlds need the explicit engine".into())),
+            ExprKind::Qualified(..) => Err(Fallback(
+                "references to other worlds need the explicit engine".into(),
+            )),
             _ => {
                 let b = self.form(e, env)?;
                 Ok(self.bool_dist(b))
@@ -803,7 +1095,10 @@ impl<'a> Sym<'a> {
             None => vec![(self.vals[s].clone(), TRUE)],
             Some(bs) => {
                 let dom = self.world().slots[s].domain.clone();
-                dom.into_iter().enumerate().map(|(k, v)| (v, code_eq(&mut self.bdd, &bs, k))).collect()
+                dom.into_iter()
+                    .enumerate()
+                    .map(|(k, v)| (v, code_eq(&mut self.bdd, &bs, k)))
+                    .collect()
             }
         }
     }
@@ -825,14 +1120,21 @@ impl<'a> Sym<'a> {
         let t0 = std::time::Instant::now();
         let r = self.eval_at_inner(step, f);
         if std::env::var("KEN_TIMING").is_ok() {
-            eprintln!("expect {:>40} {:>8.1}ms", self.prog.text(f.span).chars().take(40).collect::<String>(), t0.elapsed().as_secs_f64() * 1e3);
+            eprintln!(
+                "expect {:>40} {:>8.1}ms",
+                self.prog.text(f.span).chars().take(40).collect::<String>(),
+                t0.elapsed().as_secs_f64() * 1e3
+            );
         }
         r
     }
 
     fn eval_at_inner(&mut self, step: usize, f: &E) -> SR<bool> {
         let snap = self.snaps[step].clone();
-        let (th, vs) = (self.theta, std::mem::replace(&mut self.vals, (*snap.vals).clone()));
+        let (th, vs) = (
+            self.theta,
+            std::mem::replace(&mut self.vals, (*snap.vals).clone()),
+        );
         self.theta = snap.theta;
         let r = self.form(f, &vec![]);
         self.theta = th;
@@ -844,8 +1146,15 @@ impl<'a> Sym<'a> {
 /// Does a formula mention anyone's knowledge? (Those parts are the expensive ones.)
 fn has_beliefs(e: &E) -> bool {
     match &e.kind {
-        ExprKind::Epistemic { .. } | ExprKind::Common { .. } | ExprKind::Deducible { .. } | ExprKind::Possible { .. } => true,
-        ExprKind::Not(a) | ExprKind::Neg(a) | ExprKind::Field(a, _) | ExprKind::At(a, _) | ExprKind::Index(_, a) => has_beliefs(a),
+        ExprKind::Epistemic { .. }
+        | ExprKind::Common { .. }
+        | ExprKind::Deducible { .. }
+        | ExprKind::Possible { .. } => true,
+        ExprKind::Not(a)
+        | ExprKind::Neg(a)
+        | ExprKind::Field(a, _)
+        | ExprKind::At(a, _)
+        | ExprKind::Index(_, a) => has_beliefs(a),
         ExprKind::Bin(_, a, b) => has_beliefs(a) || has_beliefs(b),
         ExprKind::Quant { body, .. } => has_beliefs(body),
         ExprKind::Call(_, xs) | ExprKind::Tuple(xs) => xs.iter().any(has_beliefs),

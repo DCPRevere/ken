@@ -30,14 +30,35 @@ pub struct ViewRec {
     pub actual: Vec<ActionInst>,
 }
 
+/// Something an agent wants, from a step on.
+#[derive(Clone, Debug)]
+pub struct WantRec {
+    pub formula: Value, // Value::Formula
+}
+
+/// A loosely held belief: `A suspects φ because …`.
+#[derive(Clone, Debug)]
+pub struct SuspRec {
+    pub formula: Value, // Value::Formula
+    pub sources: Vec<(usize, String)>,
+    pub snapshot: Vec<Option<Vec<ActionInst>>>,
+    pub line: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     pub views: Vec<HashMap<String, ViewRec>>,
+    pub wants: Vec<Vec<WantRec>>,
+    pub suspicions: Vec<Vec<SuspRec>>,
 }
 
 impl Registry {
     pub fn new(n_agents: usize) -> Self {
-        Registry { views: vec![HashMap::new(); n_agents] }
+        Registry {
+            views: vec![HashMap::new(); n_agents],
+            wants: vec![vec![]; n_agents],
+            suspicions: vec![vec![]; n_agents],
+        }
     }
 }
 
@@ -48,13 +69,13 @@ pub type CKey = (usize, String);
 pub struct ConclRec {
     pub key: CKey,
     pub agent: u32,
-    pub formula: Value, // Value::Formula
+    pub formula: Value,                      // Value::Formula
     pub event_sources: Vec<(usize, String)>, // (world, label)
     pub belief_sources: Vec<Value>,
     pub despite: Vec<(usize, String)>,
     pub step: usize,
     pub snapshot: Vec<Option<Vec<ActionInst>>>, // views of event sources when concluded
-    pub foreign: Option<usize>,                // target world, if about another world
+    pub foreign: Option<usize>,                 // target world, if about another world
     pub line: usize,
 }
 
@@ -62,6 +83,8 @@ pub struct ConclRec {
 #[derive(Clone, Debug, Default)]
 pub struct ForeignStore {
     pub views: HashMap<String, (Vec<ActionInst>, usize)>,
+    /// facts told directly, e.g. by a narrator telling how things stood at the start
+    pub facts: HashMap<usize, Value>,
     pub active: Vec<ConclRec>,
 }
 

@@ -17,8 +17,12 @@ const TERM: u32 = u32::MAX;
 #[inline]
 fn mix(a: u32, b: u32, c: u32) -> u64 {
     let mut h = (a as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= (b as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F).rotate_left(21);
-    h ^= (c as u64).wrapping_mul(0x1656_67B1_9E37_79F9).rotate_left(42);
+    h ^= (b as u64)
+        .wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        .rotate_left(21);
+    h ^= (c as u64)
+        .wrapping_mul(0x1656_67B1_9E37_79F9)
+        .rotate_left(42);
     h ^ (h >> 29)
 }
 
@@ -51,7 +55,10 @@ struct Unique {
 impl Unique {
     fn with_capacity(n: usize) -> Self {
         let cap = (n * 2).next_power_of_two().max(1 << 16);
-        Unique { slots: vec![[0, 0, 0, u32::MAX]; cap], len: 0 }
+        Unique {
+            slots: vec![[0, 0, 0, u32::MAX]; cap],
+            len: 0,
+        }
     }
     #[inline]
     fn find(&self, _nodes: &[Node], var: u32, lo: B, hi: B) -> Result<u32, usize> {
@@ -93,12 +100,18 @@ struct Cache {
 }
 impl Cache {
     fn new(bits: u32) -> Self {
-        Cache { e: vec![[u32::MAX; 4]; 1 << bits] }
+        Cache {
+            e: vec![[u32::MAX; 4]; 1 << bits],
+        }
     }
     #[inline]
     fn get(&self, a: u32, b: u32, c: u32) -> Option<u32> {
         let x = self.e[(mix(a, b, c) as usize) & (self.e.len() - 1)];
-        if x[0] == a && x[1] == b && x[2] == c { Some(x[3]) } else { None }
+        if x[0] == a && x[1] == b && x[2] == c {
+            Some(x[3])
+        } else {
+            None
+        }
     }
     #[inline]
     fn put(&mut self, a: u32, b: u32, c: u32, r: u32) {
@@ -139,7 +152,11 @@ impl Default for Bdd {
 impl Bdd {
     pub fn new() -> Self {
         Bdd {
-            nodes: vec![Node { var: TERM, lo: TRUE, hi: TRUE }],
+            nodes: vec![Node {
+                var: TERM,
+                lo: TRUE,
+                hi: TRUE,
+            }],
             unique: Unique::with_capacity(1 << 16),
             ite_c: Cache::new(MIN_BITS),
             quant_c: Cache::new(MIN_BITS),
@@ -151,7 +168,10 @@ impl Bdd {
 
     /// Grow the caches as the table grows, so they keep their hit rate.
     fn maybe_grow_caches(&mut self) {
-        let want = ((self.nodes.len() as u64).next_power_of_two().trailing_zeros()).clamp(MIN_BITS, MAX_BITS);
+        let want = ((self.nodes.len() as u64)
+            .next_power_of_two()
+            .trailing_zeros())
+        .clamp(MIN_BITS, MAX_BITS);
         if want > self.ite_c.bits() {
             self.ite_c.clear_resize(want);
             self.quant_c.clear_resize(want - 1);
@@ -164,7 +184,11 @@ impl Bdd {
             return lo;
         }
         // canonical form: hi edge regular
-        let (lo, hi, out) = if neg(hi) == 1 { (lo ^ 1, hi ^ 1, 1) } else { (lo, hi, 0) };
+        let (lo, hi, out) = if neg(hi) == 1 {
+            (lo ^ 1, hi ^ 1, 1)
+        } else {
+            (lo, hi, 0)
+        };
         let id = match self.unique.find(&self.nodes, var, lo, hi) {
             Ok(id) => id,
             Err(slot) => {
@@ -234,8 +258,16 @@ impl Bdd {
             return f ^ 1;
         }
         // normalise: f regular; then g regular (negating the result)
-        let (f, g, h) = if neg(f) == 1 { (f ^ 1, h, g) } else { (f, g, h) };
-        let (g, h, out) = if neg(g) == 1 { (g ^ 1, h ^ 1, 1) } else { (g, h, 0) };
+        let (f, g, h) = if neg(f) == 1 {
+            (f ^ 1, h, g)
+        } else {
+            (f, g, h)
+        };
+        let (g, h, out) = if neg(g) == 1 {
+            (g ^ 1, h ^ 1, 1)
+        } else {
+            (g, h, 0)
+        };
         if let Some(r) = self.ite_c.get(f, g, h) {
             return r ^ out;
         }
@@ -303,7 +335,11 @@ impl Bdd {
             TRUE
         } else {
             let h = self.exists(hi, set);
-            if quantified { self.or(l, h) } else { self.mk(n.var, l, h) }
+            if quantified {
+                self.or(l, h)
+            } else {
+                self.mk(n.var, l, h)
+            }
         };
         self.quant_c.put(f, set, 0, r);
         r
@@ -426,7 +462,11 @@ impl Bdd {
                 continue;
             }
             let (lo, hi) = (remap(&map, nd.lo), remap(&map, nd.hi));
-            nodes.push(Node { var: nd.var, lo, hi });
+            nodes.push(Node {
+                var: nd.var,
+                lo,
+                hi,
+            });
             if let Err(slot) = unique.find(&nodes, nd.var, lo, hi) {
                 unique.insert_at(slot, id, &nodes);
             }
@@ -446,7 +486,9 @@ mod tests {
     use super::*;
 
     fn table(b: &Bdd, f: B, n: usize) -> Vec<bool> {
-        (0..1usize << n).map(|k| b.eval(f, &(0..n).map(|i| (k >> i) & 1 == 1).collect::<Vec<_>>())).collect()
+        (0..1usize << n)
+            .map(|k| b.eval(f, &(0..n).map(|i| (k >> i) & 1 == 1).collect::<Vec<_>>()))
+            .collect()
     }
 
     #[test]
@@ -489,29 +531,58 @@ mod tests {
             let td = table(&b, d, n);
             let op = next() % 7;
             let (r, want): (B, Vec<bool>) = match op {
-                0 => (b.and(a, c), ta.iter().zip(&tc).map(|(x, y)| *x && *y).collect()),
-                1 => (b.or(a, c), ta.iter().zip(&tc).map(|(x, y)| *x || *y).collect()),
+                0 => (
+                    b.and(a, c),
+                    ta.iter().zip(&tc).map(|(x, y)| *x && *y).collect(),
+                ),
+                1 => (
+                    b.or(a, c),
+                    ta.iter().zip(&tc).map(|(x, y)| *x || *y).collect(),
+                ),
                 2 => (b.not(a), ta.iter().map(|x| !x).collect()),
-                3 => (b.ite(a, c, d), (0..ta.len()).map(|k| if ta[k] { tc[k] } else { td[k] }).collect()),
+                3 => (
+                    b.ite(a, c, d),
+                    (0..ta.len())
+                        .map(|k| if ta[k] { tc[k] } else { td[k] })
+                        .collect(),
+                ),
                 6 => {
                     let k = 1 + (next() % 3) as usize;
                     let vs: Vec<u32> = (0..k).map(|_| (next() % n as u64) as u32).collect();
                     let s = b.var_set(&vs);
                     let r = b.forall_each(a, s);
-                    let want = (0..ta.len()).map(|w| ta[w] && vs.iter().all(|v| ta[w & !(1 << v)] && ta[w | (1 << v)])).collect();
+                    let want = (0..ta.len())
+                        .map(|w| ta[w] && vs.iter().all(|v| ta[w & !(1 << v)] && ta[w | (1 << v)]))
+                        .collect();
                     (r, want)
                 }
                 4 => {
                     let v = (next() % n as u64) as u32;
                     let s = b.var_set(&[v]);
                     let r = b.forall(a, s);
-                    (r, (0..ta.len()).map(|k| ta[k & !(1 << v)] && ta[k | (1 << v)]).collect())
+                    (
+                        r,
+                        (0..ta.len())
+                            .map(|k| ta[k & !(1 << v)] && ta[k | (1 << v)])
+                            .collect(),
+                    )
                 }
                 _ => {
                     let v = (next() % n as u64) as u32;
                     let val = next() % 2 == 1;
                     let r = b.restrict(a, v, val);
-                    (r, (0..ta.len()).map(|k| if val { ta[k | (1 << v)] } else { ta[k & !(1 << v)] }).collect())
+                    (
+                        r,
+                        (0..ta.len())
+                            .map(|k| {
+                                if val {
+                                    ta[k | (1 << v)]
+                                } else {
+                                    ta[k & !(1 << v)]
+                                }
+                            })
+                            .collect(),
+                    )
                 }
             };
             assert_eq!(table(&b, r, n), want, "op {}", op);

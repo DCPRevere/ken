@@ -1,0 +1,3 @@
+# expect-error: no library called 'spaces'
+use spaces
+agent A

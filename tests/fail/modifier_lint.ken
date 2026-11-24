@@ -1,0 +1,11 @@
+# expect-warning: apply only to the name just before them
+agent A, B, C
+action wave(x: Agent)
+  seen by: x
+action nod(x: Agent)
+  seen by: x
+timeline:
+  start:
+    seen by: everyone
+  e1: wave(A)
+        seen by: B, C as nod(A)

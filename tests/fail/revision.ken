@@ -1,0 +1,39 @@
+# expect-ok
+# Persons revise: an unexpected sight is taken as an unseen change; a concluded
+# liar's testimony is withdrawn; known facts aren't overturned by testimony.
+agent A, B, C
+type Place = home | away
+fact place(Agent): Place
+fact guilty: bool
+action wave(x: Agent)
+  needs:   place(x) = home
+  seen by: x, every a where place(a) = home
+action go(x: Agent)
+  effect:  place(x) = away
+  seen by: x
+timeline:
+  start:
+    place(A) = home
+    place(B) = home
+    place(C) = home
+    guilty = false
+    honest(C) = false
+    seen by: A
+    seen by: B hiding honest(C)
+    seen by: C
+  e1: go(C)
+  e2: tell(C, A, guilty)                 # A knows better
+  e3: tell(C, B, place(A) = away)           # news B can't check
+  e4: wave(A)                            # B sees A at home after all
+        seen by: A, B
+  e5: tell(C, B, guilty)
+        B concludes not honest(C) because e4
+expect at e2:
+  A knows not guilty
+expect at e3:
+  B believes place(A) = away
+expect at e4:
+  B believes place(A) = home
+expect at e5:
+  not (B believes guilty)
+  B believes not honest(C)

@@ -1,0 +1,7 @@
+# expect-error: e2 is at time 5, earlier than the event before it (time 10)
+agent A
+action wait(x: Agent)
+  seen by: x
+timeline:
+  e1 @ 10: wait(A)
+  e2 @ 5: wait(A)

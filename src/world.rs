@@ -55,6 +55,42 @@ pub struct ActionInfo {
     pub needs: Vec<E>,
     pub effects: Vec<Assign>,
     pub seen_by: Option<Vec<SeenItem>>,
+    /// `may happen unseen`: logicians allow that it happened when they didn't see
+    pub unseen: bool,
+}
+
+/// One part of an event's `because`. `check` is what must hold just before the
+/// event: the part itself when it is about the actor's own mind, otherwise
+/// `actor believes part`. `holder` is the actor in the second case.
+#[derive(Clone, Debug)]
+pub struct Reason {
+    pub check: E,
+    pub part: E,
+    pub holder: Option<E>,
+}
+
+/// `A watches f`: from this step on, A sees f's value after every step.
+#[derive(Clone, Debug)]
+pub struct WatchClause {
+    pub agent: E,
+    pub what: E,
+    pub on: bool,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct WantClause {
+    pub agent: E,
+    pub formula: E,
+    pub on: bool,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct ForgetClause {
+    pub agent: E,
+    pub what: E,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -74,10 +110,40 @@ pub struct Step {
     pub actions: Vec<Call>,
     pub env: Env,
     pub because: Option<E>,
+    /// `because` split into the checks Ken makes: each part, or the actor believing it
+    pub reasons: Vec<Reason>,
     pub seen_by: Option<Vec<SeenItem>>,
     pub conclusions: Vec<Conclusion>,
     pub assigns: Vec<Assign>,
+    pub purpose: Option<E>,
+    pub time: Option<i64>,
+    pub wants: Vec<WantClause>,
+    pub suspicions: Vec<Conclusion>,
+    pub forgets: Vec<ForgetClause>,
+    pub watches: Vec<WatchClause>,
     pub span: Span,
+}
+
+impl Step {
+    pub fn empty_start(span: Span) -> Step {
+        Step {
+            label: "start".into(),
+            actions: vec![],
+            env: vec![],
+            because: None,
+            reasons: vec![],
+            seen_by: None,
+            conclusions: vec![],
+            assigns: vec![],
+            purpose: None,
+            time: None,
+            wants: vec![],
+            suspicions: vec![],
+            forgets: vec![],
+            watches: vec![],
+            span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +179,11 @@ pub struct World {
     pub changeable: HashSet<String>,
     pub relevant: HashSet<usize>,
     pub honest_relevant: bool,
+    /// travel times between places: (a, b, time)
+    /// libraries this world uses: (library, alias)
+    pub uses: Vec<(String, String)>,
+    /// warnings found while compiling: (line, message)
+    pub lint: Vec<(usize, String)>,
 }
 
 pub struct Program {
@@ -141,7 +212,13 @@ impl Program {
             Value::Int(n) => n.to_string(),
             Value::Sym(s) => s.to_string(),
             Value::Agent(w, a) => self.agent_name(*w, *a),
-            Value::Tuple(xs) => format!("({})", xs.iter().map(|x| self.show(x)).collect::<Vec<_>>().join(", ")),
+            Value::Tuple(xs) => format!(
+                "({})",
+                xs.iter()
+                    .map(|x| self.show(x))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Value::Unknown => "?".into(),
             Value::Formula(f) => self.text(f.expr.span).to_string(),
             Value::Event(e) => match e.seen_by {
@@ -151,16 +228,27 @@ impl Program {
         }
     }
     pub fn show_action(&self, a: &ActionInst) -> String {
-        format!("{}({})", a.name, a.args.iter().map(|x| self.show(x)).collect::<Vec<_>>().join(", "))
+        format!(
+            "{}({})",
+            a.name,
+            a.args
+                .iter()
+                .map(|x| self.show(x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
     pub fn show_actions(&self, xs: &[ActionInst]) -> String {
-        xs.iter().map(|a| self.show_action(a)).collect::<Vec<_>>().join(" then ")
+        xs.iter()
+            .map(|a| self.show_action(a))
+            .collect::<Vec<_>>()
+            .join(" then ")
     }
 }
 
 pub type CResult<T> = Result<T, (usize, String)>;
 
-pub const PRELUDE: &str = include_str!("prelude.ken");
+pub const PRELUDE: &str = include_str!("lib/std.ken");
 
 /// Evaluate a constant integer expression (ranges, parameters, loop variables).
 pub fn const_int(e: &E, params: &HashMap<String, i64>, env: &Env) -> CResult<i64> {
@@ -170,7 +258,10 @@ pub fn const_int(e: &E, params: &HashMap<String, i64>, env: &Env) -> CResult<i64
             if let Some(Value::Int(v)) = env_get(env, n) {
                 return Ok(*v);
             }
-            params.get(n).copied().ok_or((e.span.line, format!("'{}' is not a known number", n)))
+            params
+                .get(n)
+                .copied()
+                .ok_or((e.span.line, format!("'{}' is not a known number", n)))
         }
         ExprKind::Neg(a) => Ok(-const_int(a, params, env)?),
         ExprKind::Bin(op, a, b) => {
@@ -186,12 +277,25 @@ pub fn const_int(e: &E, params: &HashMap<String, i64>, env: &Env) -> CResult<i64
     }
 }
 
-pub fn compile(file: &str, src: &str, decls: Vec<Decl>, prelude: Vec<Decl>, given: &HashMap<String, i64>) -> CResult<Program> {
+pub fn compile(
+    file: &str,
+    src: &str,
+    decls: Vec<Decl>,
+    prelude: Vec<Decl>,
+    libs: Vec<Decl>,
+    given: &HashMap<String, i64>,
+) -> CResult<Program> {
     let mut travel = Travel::Overwrite;
     let mut allow_bootstrap = false;
     let mut params: HashMap<String, i64> = HashMap::new();
     let mut top: Vec<Decl> = Vec::new();
-    let mut world_decls: Vec<(String, Vec<String>, Option<(String, TimeRef)>, Vec<Decl>, Span)> = Vec::new();
+    let mut world_decls: Vec<(
+        String,
+        Vec<String>,
+        Option<(String, TimeRef)>,
+        Vec<Decl>,
+        Span,
+    )> = Vec::new();
     let mut top_expects = Vec::new();
 
     for d in decls {
@@ -212,11 +316,20 @@ pub fn compile(file: &str, src: &str, decls: Vec<Decl>, prelude: Vec<Decl>, give
                         let x = const_int(&v, &params, &vec![])?;
                         params.insert(n, x);
                     } else {
-                        return Err((0, format!("parameter '{}' needs a value: pass --given {}=…", n, n)));
+                        return Err((
+                            0,
+                            format!("parameter '{}' needs a value: pass --given {}=…", n, n),
+                        ));
                     }
                 }
             }
-            Decl::World { name, about, revises, decls, span } => world_decls.push((name, about, revises, decls, span)),
+            Decl::World {
+                name,
+                about,
+                revises,
+                decls,
+                span,
+            } => world_decls.push((name, about, revises, decls, span)),
             Decl::Expect(e) => top_expects.push(e),
             other => top.push(other),
         }
@@ -227,7 +340,10 @@ pub fn compile(file: &str, src: &str, decls: Vec<Decl>, prelude: Vec<Decl>, give
 
     let has_worlds = !world_decls.is_empty();
     if has_worlds && top.iter().any(|d| !matches!(d, Decl::Expect(_))) {
-        return Err((0, "when a file declares worlds, put agents, facts and timelines inside them".into()));
+        return Err((
+            0,
+            "when a file declares worlds, put agents, facts and timelines inside them".into(),
+        ));
     }
     if !has_worlds {
         world_decls.push(("main".into(), vec![], None, top, Span::default()));
@@ -239,18 +355,28 @@ pub fn compile(file: &str, src: &str, decls: Vec<Decl>, prelude: Vec<Decl>, give
     let mut raw: Vec<Vec<Decl>> = Vec::new();
     for (i, (name, about, revises, decls, _span)) in world_decls.iter().enumerate() {
         let mut ds: Vec<Decl> = prelude.clone();
+        ds.extend(libs.iter().cloned());
         let mut revises_idx = None;
         if let Some((base, from)) = revises {
-            let bi = names.iter().position(|n| n == base).ok_or((0, format!("world '{}' revises unknown world '{}'", name, base)))?;
+            let bi = names.iter().position(|n| n == base).ok_or((
+                0,
+                format!("world '{}' revises unknown world '{}'", name, base),
+            ))?;
             if bi >= i {
-                return Err((0, format!("world '{}' must come after '{}', which it revises", name, base)));
+                return Err((
+                    0,
+                    format!(
+                        "world '{}' must come after '{}', which it revises",
+                        name, base
+                    ),
+                ));
             }
             let from_label = match from {
                 TimeRef::Start => "start".to_string(),
                 TimeRef::Event { label, .. } => label.clone(),
                 _ => return Err((0, "revises … from needs an event name".into())),
             };
-            for d in &raw[bi] {
+            for d in &raw[bi][libs.len()..] {
                 match d {
                     Decl::Timeline(evs) => {
                         let mut kept = Vec::new();
@@ -263,7 +389,10 @@ pub fn compile(file: &str, src: &str, decls: Vec<Decl>, prelude: Vec<Decl>, give
                             }
                         }
                         if !found {
-                            return Err((0, format!("world '{}' has no event '{}'", base, from_label)));
+                            return Err((
+                                0,
+                                format!("world '{}' has no event '{}'", base, from_label),
+                            ));
                         }
                         ds.push(Decl::Timeline(kept));
                     }
@@ -278,24 +407,43 @@ pub fn compile(file: &str, src: &str, decls: Vec<Decl>, prelude: Vec<Decl>, give
             revises_idx = Some((bi, from_label));
         }
         let own: Vec<Decl> = decls.clone();
-        let mut own_raw = Vec::new();
-        for d in &ds {
-            if !is_prelude_decl(d) {
-                own_raw.push(d.clone());
-            }
-        }
+        // what this world declares itself (libraries included, the built-in std not)
+        let own_raw: Vec<Decl> = ds[prelude.len()..].to_vec();
+        let mut own_raw = own_raw;
         own_raw.extend(own.iter().cloned());
         raw.push(own_raw);
         ds.extend(own);
         let about_idx = about
             .iter()
-            .map(|a| names.iter().position(|n| n == a).ok_or((0, format!("world '{}' is about unknown world '{}'", name, a))))
+            .map(|a| {
+                names.iter().position(|n| n == a).ok_or((
+                    0,
+                    format!("world '{}' is about unknown world '{}'", name, a),
+                ))
+            })
             .collect::<CResult<Vec<_>>>()?;
-        let w = compile_world(i, name, !has_worlds, about_idx, revises_idx, ds, &params, &names)?;
+        let w = compile_world(
+            i,
+            name,
+            !has_worlds,
+            about_idx,
+            revises_idx,
+            ds,
+            &params,
+            &names,
+        )?;
         worlds.push(w);
     }
     // segment origin worlds are resolved; mark relevance from all author expressions
-    let mut prog = Program { file: file.into(), src: src.into(), worlds, top_expects, travel, allow_bootstrap, params };
+    let mut prog = Program {
+        file: file.into(),
+        src: src.into(),
+        worlds,
+        top_expects,
+        travel,
+        allow_bootstrap,
+        params,
+    };
     compute_relevance(&mut prog, &raw);
     Ok(prog)
 }
@@ -342,12 +490,17 @@ fn compile_world(
         changeable: HashSet::new(),
         relevant: HashSet::new(),
         honest_relevant: false,
+        uses: vec![],
+        lint: vec![],
     };
     w.groups.insert("Agent".into(), vec![]);
     let mut taken: HashMap<String, &'static str> = HashMap::new();
     let mut claim = |n: &str, what: &'static str, line: usize| -> CResult<()> {
         if let Some(prev) = taken.get(n) {
-            return Err((line, format!("'{}' is already used as {}; names must be unique", n, prev)));
+            return Err((
+                line,
+                format!("'{}' is already used as {}; names must be unique", n, prev),
+            ));
         }
         taken.insert(n.to_string(), what);
         Ok(())
@@ -359,9 +512,19 @@ fn compile_world(
     // pass 1: agents and types
     for d in &decls {
         match d {
-            Decl::Agent { names, mode, sees_all_of, span } => {
+            Decl::Agent {
+                names,
+                mode,
+                sees_all_of,
+                span,
+            } => {
                 let sees = match sees_all_of {
-                    Some(n) => Some(world_names.iter().position(|x| x == n).ok_or((span.line, format!("unknown world '{}'", n)))?),
+                    Some(n) => Some(
+                        world_names
+                            .iter()
+                            .position(|x| x == n)
+                            .ok_or((span.line, format!("unknown world '{}'", n)))?,
+                    ),
                     None => None,
                 };
                 for an in names {
@@ -369,7 +532,12 @@ fn compile_world(
                         None => {
                             claim(&an.base, "an agent", span.line)?;
                             let ix = w.agents.len() as u32;
-                            w.agents.push(AgentInfo { name: an.base.clone(), mode: mode.unwrap_or(Mode::Person), sees_all_of: sees, person: None });
+                            w.agents.push(AgentInfo {
+                                name: an.base.clone(),
+                                mode: mode.unwrap_or(Mode::Person),
+                                sees_all_of: sees,
+                                person: None,
+                            });
                             w.agent_names.insert(an.base.clone(), ix);
                             w.groups.get_mut("Agent").unwrap().push(ix);
                         }
@@ -381,7 +549,12 @@ fn compile_world(
                             for k in lo..=hi {
                                 let nm = format!("{}[{}]", an.base, k);
                                 let ix = w.agents.len() as u32;
-                                w.agents.push(AgentInfo { name: nm.clone(), mode: mode.unwrap_or(Mode::Person), sees_all_of: sees, person: None });
+                                w.agents.push(AgentInfo {
+                                    name: nm.clone(),
+                                    mode: mode.unwrap_or(Mode::Person),
+                                    sees_all_of: sees,
+                                    person: None,
+                                });
                                 w.agent_names.insert(nm, ix);
                                 w.groups.get_mut("Agent").unwrap().push(ix);
                                 members.push(ix);
@@ -392,7 +565,11 @@ fn compile_world(
                     }
                 }
             }
-            Decl::Type { name: tn, def, span } => {
+            Decl::Type {
+                name: tn,
+                def,
+                span,
+            } => {
                 claim(tn, "a type", span.line)?;
                 let ty = match def {
                     TypeDef::Enum(vs) => {
@@ -400,9 +577,15 @@ fn compile_world(
                             claim(v, "a constant", span.line)?;
                             w.consts.insert(v.clone(), tn.clone());
                         }
-                        Ty::Enum(tn.clone(), vs.iter().map(|s| Rc::from(s.as_str())).collect())
+                        Ty::Enum(
+                            tn.clone(),
+                            vs.iter().map(|s| Rc::from(s.as_str())).collect(),
+                        )
                     }
-                    TypeDef::Range(lo, hi) => Ty::Range(const_int(lo, params, &vec![])?, const_int(hi, params, &vec![])?),
+                    TypeDef::Range(lo, hi) => Ty::Range(
+                        const_int(lo, params, &vec![])?,
+                        const_int(hi, params, &vec![])?,
+                    ),
                     TypeDef::Record(fields) => {
                         let mut fs = vec![];
                         for (f, t) in fields {
@@ -418,57 +601,151 @@ fn compile_world(
     }
     // segments
     for d in &decls {
-        if let Decl::Segment { name: sn, origin_world, origin, at, span } = d {
+        if let Decl::Segment {
+            name: sn,
+            origin_world,
+            origin,
+            at,
+            span,
+        } = d
+        {
             let ow = match origin_world {
-                Some(n) => world_names.iter().position(|x| x == n).ok_or((span.line, format!("unknown world '{}'", n)))?,
+                Some(n) => world_names
+                    .iter()
+                    .position(|x| x == n)
+                    .ok_or((span.line, format!("unknown world '{}'", n)))?,
                 None => id,
             };
             let base = sn.split('#').next().unwrap().to_string();
-            let base_ix = *w.agent_names.get(&base).ok_or((span.line, format!("segment '{}' needs an agent '{}' in this world", sn, base)))?;
+            let base_ix = *w.agent_names.get(&base).ok_or((
+                span.line,
+                format!("segment '{}' needs an agent '{}' in this world", sn, base),
+            ))?;
             claim(sn, "an agent", span.line)?;
             let ix = w.agents.len() as u32;
             let mode = w.agents[base_ix as usize].mode;
-            w.agents.push(AgentInfo { name: sn.clone(), mode, sees_all_of: None, person: Some(base_ix) });
+            w.agents.push(AgentInfo {
+                name: sn.clone(),
+                mode,
+                sees_all_of: None,
+                person: Some(base_ix),
+            });
             w.agent_names.insert(sn.clone(), ix);
             w.agent_names.insert(format!("{}#1", base), base_ix);
             w.groups.get_mut("Agent").unwrap().push(ix);
-            w.segments.push(SegmentInfo { agent: ix, origin_world: ow, origin_agent: origin.clone(), at: at.clone(), span: *span });
+            w.segments.push(SegmentInfo {
+                agent: ix,
+                origin_world: ow,
+                origin_agent: origin.clone(),
+                at: at.clone(),
+                span: *span,
+            });
         }
     }
     // pass 2: facts, actions, rules
     for d in &decls {
         match d {
-            Decl::Fact { name: fname, params: ps, ty, default, domain, span } => {
+            Decl::Fact {
+                name: fname,
+                params: ps,
+                ty,
+                default,
+                domain,
+                span,
+            } => {
                 if w.facts.contains_key(fname) {
                     continue; // re-declared via revises copy
                 }
                 claim(fname, "a fact", span.line)?;
-                let pts = ps.iter().map(|t| resolve_ty(&w, t, params, span.line)).collect::<CResult<Vec<_>>>()?;
+                let pts = ps
+                    .iter()
+                    .map(|t| resolve_ty(&w, t, params, span.line))
+                    .collect::<CResult<Vec<_>>>()?;
                 let fty = resolve_ty(&w, ty, params, span.line)?;
                 let dom = match domain {
-                    Some(vs) => Some(vs.iter().map(|e| const_value(&w, e, params, &fty)).collect::<CResult<Vec<_>>>()?),
+                    Some(vs) => Some(
+                        vs.iter()
+                            .map(|e| const_value(&w, e, params, &fty))
+                            .collect::<CResult<Vec<_>>>()?,
+                    ),
                     None => None,
                 };
-                w.facts.insert(fname.clone(), FactInfo { name: fname.clone(), params: pts, ty: fty, default: default.clone(), domain: dom });
+                w.facts.insert(
+                    fname.clone(),
+                    FactInfo {
+                        name: fname.clone(),
+                        params: pts,
+                        ty: fty,
+                        default: default.clone(),
+                        domain: dom,
+                    },
+                );
             }
-            Decl::Action { name: an, params: ps, needs, effects, seen_by, span } => {
+            Decl::Action {
+                name: an,
+                params: ps,
+                needs,
+                effects,
+                seen_by,
+                unseen,
+                span,
+            } => {
+                if let Some(items) = seen_by {
+                    lint_seen_by(items, span.line, &mut w.lint);
+                }
                 if w.actions.contains_key(an) {
                     continue;
                 }
                 claim(an, "an action", span.line)?;
                 let pts = ps
                     .iter()
-                    .map(|(n, t)| Ok((n.clone(), match t { Some(t) => resolve_ty(&w, t, params, span.line)?, None => Ty::Content })))
+                    .map(|(n, t)| {
+                        Ok((
+                            n.clone(),
+                            match t {
+                                Some(t) => resolve_ty(&w, t, params, span.line)?,
+                                None => Ty::Content,
+                            },
+                        ))
+                    })
                     .collect::<CResult<Vec<_>>>()?;
                 for e in effects {
                     if let Some(f) = assign_fact(e) {
                         w.changeable.insert(f);
                     }
                 }
-                w.actions.insert(an.clone(), ActionInfo { name: an.clone(), params: pts, needs: needs.clone(), effects: effects.clone(), seen_by: seen_by.clone() });
+                w.actions.insert(
+                    an.clone(),
+                    ActionInfo {
+                        name: an.clone(),
+                        params: pts,
+                        needs: needs.clone(),
+                        effects: effects.clone(),
+                        seen_by: seen_by.clone(),
+                        unseen: *unseen,
+                    },
+                );
             }
-            Decl::Rule { name: rn, private, trigger, for_every, when, then, span } => {
-                w.rules.push(RuleInfo { name: rn.clone(), private: *private, trigger: trigger.clone(), for_every: for_every.clone(), when: when.clone(), then: then.clone(), span: *span });
+            Decl::Used { lib, alias } => w.uses.push((lib.clone(), alias.clone())),
+            Decl::Use { span, .. } => return Err((span.line, "`use` goes at the top of a file or a world".into())),
+            Decl::Rule {
+                name: rn,
+                private,
+                trigger,
+                for_every,
+                when,
+                then,
+                span,
+            } => {
+                w.rules.push(RuleInfo {
+                    name: rn.clone(),
+                    private: *private,
+                    trigger: trigger.clone(),
+                    for_every: for_every.clone(),
+                    when: when.clone(),
+                    then: then.clone(),
+                    span: *span,
+                });
             }
             _ => {}
         }
@@ -483,7 +760,10 @@ fn compile_world(
         let f = w.facts[&fname].clone();
         let mut combos: Vec<Vec<Value>> = vec![vec![]];
         for pt in &f.params {
-            let dom = domain_of(&w, pt).ok_or((0, format!("fact '{}' has a parameter with no finite domain", fname)))?;
+            let dom = domain_of(&w, pt).ok_or((
+                0,
+                format!("fact '{}' has a parameter with no finite domain", fname),
+            ))?;
             let mut next = vec![];
             for c in &combos {
                 for v in &dom {
@@ -501,7 +781,11 @@ fn compile_world(
         for args in combos {
             let ix = w.slots.len();
             w.slot_of.insert((fname.clone(), args.clone()), ix);
-            w.slots.push(SlotInfo { fact: fname.clone(), args, domain: dom.clone() });
+            w.slots.push(SlotInfo {
+                fact: fname.clone(),
+                args,
+                domain: dom.clone(),
+            });
         }
     }
     // timeline and expects
@@ -512,25 +796,76 @@ fn compile_world(
                     let mut seen_by = None;
                     let mut conclusions = vec![];
                     let mut assigns = vec![];
+                    let mut wants = vec![];
+                    let mut suspicions = vec![];
+                    let mut forgets = vec![];
+                    let mut watches = vec![];
                     for c in &ev.clauses {
                         match c {
-                            EventClause::SeenBy(s, _) => {
+                            EventClause::SeenBy(s, sp) => {
+                                lint_seen_by(s, sp.line, &mut w.lint);
                                 let mut all = seen_by.take().unwrap_or_else(Vec::new);
                                 all.extend(s.iter().cloned());
                                 seen_by = Some(all);
                             }
-                            EventClause::Concludes(c) => conclusions.push(c.clone()),
+                            EventClause::Concludes(c) => {
+                                if c.because.is_none() && c.despite.is_none() {
+                                    w.lint.push((c.span.line, "this conclusion rests on nothing: add `because` with the events or beliefs behind it, so Ken can check the person had them (and withdraw the conclusion if they go)".into()));
+                                }
+                                conclusions.push(c.clone())
+                            }
                             EventClause::Assign(a) => assigns.push(a.clone()),
+                            EventClause::Wants {
+                                agent,
+                                formula,
+                                on,
+                                span,
+                            } => wants.push(WantClause {
+                                agent: agent.clone(),
+                                formula: formula.clone(),
+                                on: *on,
+                                span: *span,
+                            }),
+                            EventClause::Suspects(c) => suspicions.push(c.clone()),
+                            EventClause::Watches {
+                                agent,
+                                what,
+                                on,
+                                span,
+                            } => watches.push(WatchClause {
+                                agent: agent.clone(),
+                                what: what.clone(),
+                                on: *on,
+                                span: *span,
+                            }),
+                            EventClause::Forgets { agent, what, span } => {
+                                forgets.push(ForgetClause {
+                                    agent: agent.clone(),
+                                    what: what.clone(),
+                                    span: *span,
+                                })
+                            }
                         }
                     }
+                    let time = match &ev.time {
+                        Some(e) => Some(const_int(e, params, &vec![])?),
+                        None => None,
+                    };
                     let mk = |label: String, env: Env| Step {
                         label,
                         actions: ev.actions.clone(),
                         env,
                         because: ev.because.clone(),
+                        reasons: vec![],
                         seen_by: seen_by.clone(),
                         conclusions: conclusions.clone(),
                         assigns: assigns.clone(),
+                        purpose: ev.purpose.clone(),
+                        time,
+                        wants: wants.clone(),
+                        suspicions: suspicions.clone(),
+                        forgets: forgets.clone(),
+                        watches: watches.clone(),
                         span: ev.span,
                     };
                     let mut new_steps = vec![];
@@ -541,8 +876,13 @@ fn compile_world(
                             let hi = const_int(hi, params, &vec![])?;
                             for k in lo..=hi {
                                 let env: Env = vec![(Rc::from(v.as_str()), Value::Int(k))];
-                                let args = ev.label_args.iter().map(|a| const_int(a, params, &env).map(|x| x.to_string())).collect::<CResult<Vec<_>>>()?;
-                                new_steps.push(mk(format!("{}({})", ev.label, args.join(", ")), env));
+                                let args = ev
+                                    .label_args
+                                    .iter()
+                                    .map(|a| const_int(a, params, &env).map(|x| x.to_string()))
+                                    .collect::<CResult<Vec<_>>>()?;
+                                new_steps
+                                    .push(mk(format!("{}({})", ev.label, args.join(", ")), env));
                             }
                         }
                     }
@@ -553,10 +893,13 @@ fn compile_world(
                         if w.steps.is_empty() && s.label != "start" {
                             // implicit empty start
                             w.label_index.insert("start".into(), 0);
-                            w.steps.push(Step { label: "start".into(), actions: vec![], env: vec![], because: None, seen_by: None, conclusions: vec![], assigns: vec![], span: s.span });
+                            w.steps.push(Step::empty_start(s.span));
                         }
                         if w.label_index.contains_key(&s.label) {
-                            return Err((s.span.line, format!("event '{}' is defined twice", s.label)));
+                            return Err((
+                                s.span.line,
+                                format!("event '{}' is defined twice", s.label),
+                            ));
                         }
                         w.label_index.insert(s.label.clone(), w.steps.len());
                         w.steps.push(s);
@@ -569,9 +912,99 @@ fn compile_world(
     }
     if w.steps.is_empty() {
         w.label_index.insert("start".into(), 0);
-        w.steps.push(Step { label: "start".into(), actions: vec![], env: vec![], because: None, seen_by: None, conclusions: vec![], assigns: vec![], span: Span::default() });
+        w.steps.push(Step::empty_start(Span::default()));
+    }
+    for i in 0..w.steps.len() {
+        let rs = reasons_of(&w, &w.steps[i]);
+        w.steps[i].reasons = rs;
     }
     Ok(w)
+}
+
+/// The actor of an event, as written: the first argument of its first action,
+/// when that action's first parameter is an agent.
+pub fn actor_expr(w: &World, st: &Step) -> Option<E> {
+    let c = st.actions.first()?;
+    let info = w.actions.get(&c.name)?;
+    match info.params.first() {
+        Some((_, Ty::Group(_))) => c.args.first().cloned(),
+        _ => None,
+    }
+}
+
+/// Is `e` about `who`'s own mind: what they know, believe, want, suspect or saw?
+pub fn about_mind_of(e: &E, who: &E) -> bool {
+    match &e.kind {
+        ExprKind::Not(x) => about_mind_of(x, who),
+        ExprKind::Epistemic { agent, .. }
+        | ExprKind::Wants { agent, .. }
+        | ExprKind::Suspects { agent, .. }
+        | ExprKind::Deducible { agent, .. }
+        | ExprKind::Possible { agent, .. }
+        | ExprKind::Saw { agent, .. } => same_expr(agent, who),
+        ExprKind::Common { .. } => true,
+        _ => false,
+    }
+}
+
+/// A reason for acting must be in the actor's head. A part that isn't about the
+/// actor's own mind is checked as `actor believes part`.
+fn reasons_of(w: &World, st: &Step) -> Vec<Reason> {
+    let Some(b) = &st.because else {
+        return vec![];
+    };
+    let mut parts = vec![];
+    split_conj(b, &mut parts);
+    let actor = actor_expr(w, st);
+    parts
+        .into_iter()
+        .map(|part| match &actor {
+            Some(a) if !about_mind_of(&part, a) => Reason {
+                check: Rc::new(Expr {
+                    kind: ExprKind::Epistemic {
+                        agent: a.clone(),
+                        mode: KMode::Believes,
+                        body: part.clone(),
+                    },
+                    span: part.span,
+                }),
+                part,
+                holder: Some(a.clone()),
+            },
+            _ => Reason {
+                check: part.clone(),
+                part,
+                holder: None,
+            },
+        })
+        .collect()
+}
+
+fn split_conj(e: &E, out: &mut Vec<E>) {
+    if let ExprKind::Bin(BinOp::And, a, b) = &e.kind {
+        split_conj(a, out);
+        split_conj(b, out);
+    } else {
+        out.push(e.clone());
+    }
+}
+
+/// `seen by: A, B as …` gives the view to B only; say so when it looks unintended.
+fn lint_seen_by(items: &[SeenItem], line: usize, lint: &mut Vec<(usize, String)>) {
+    if items.len() < 2 {
+        return;
+    }
+    let last = &items[items.len() - 1];
+    let shaped = last
+        .mods
+        .iter()
+        .any(|m| matches!(m, Modifier::As(_) | Modifier::Hiding(_)));
+    let bare_before = items[..items.len() - 1]
+        .iter()
+        .any(|it| it.mods.is_empty() && matches!(it.who, Who::Agent(_)));
+    if shaped && bare_before {
+        lint.push((line, "`as` and `hiding` apply only to the name just before them; the others in this list see the full event. If that's not what you mean, group them: `seen by: (A, B) hiding …`".into()));
+    }
 }
 
 fn assign_fact(a: &Assign) -> Option<String> {
@@ -582,14 +1015,26 @@ fn assign_fact(a: &Assign) -> Option<String> {
     }
 }
 
-pub fn resolve_ty(w: &World, t: &TypeRef, params: &HashMap<String, i64>, line: usize) -> CResult<Ty> {
+pub fn resolve_ty(
+    w: &World,
+    t: &TypeRef,
+    params: &HashMap<String, i64>,
+    line: usize,
+) -> CResult<Ty> {
     match t {
-        TypeRef::Range(lo, hi) => Ok(Ty::Range(const_int(lo, params, &vec![])?, const_int(hi, params, &vec![])?)),
+        TypeRef::Range(lo, hi) => Ok(Ty::Range(
+            const_int(lo, params, &vec![])?,
+            const_int(hi, params, &vec![])?,
+        )),
         TypeRef::Named(n) => match n.as_str() {
             "bool" | "Bool" => Ok(Ty::Bool),
             "Int" | "int" => Ok(Ty::Int),
             "Agent" => Ok(Ty::Group("Agent".into())),
-            _ => w.types.get(n).cloned().ok_or((line, format!("unknown type '{}'", n))),
+            _ => w
+                .types
+                .get(n)
+                .cloned()
+                .ok_or((line, format!("unknown type '{}'", n))),
         },
     }
 }
@@ -600,7 +1045,13 @@ pub fn domain_of(w: &World, t: &Ty) -> Option<Vec<Value>> {
         Ty::Int | Ty::Content => None,
         Ty::Enum(_, vs) => Some(vs.iter().map(|s| Value::Sym(s.clone())).collect()),
         Ty::Range(lo, hi) => Some((*lo..=*hi).map(Value::Int).collect()),
-        Ty::Group(g) => Some(w.groups.get(g)?.iter().map(|a| Value::Agent(w.id as u16, *a)).collect()),
+        Ty::Group(g) => Some(
+            w.groups
+                .get(g)?
+                .iter()
+                .map(|a| Value::Agent(w.id as u16, *a))
+                .collect(),
+        ),
         Ty::Record(_, fs) => {
             let mut combos: Vec<Vec<Value>> = vec![vec![]];
             for (_, ft) in fs {
@@ -626,7 +1077,9 @@ pub fn domain_of(w: &World, t: &Ty) -> Option<Vec<Value>> {
 /// A literal value at compile time (fact domains).
 pub fn const_value(w: &World, e: &E, params: &HashMap<String, i64>, _ty: &Ty) -> CResult<Value> {
     match &e.kind {
-        ExprKind::Int(_) | ExprKind::Neg(_) | ExprKind::Bin(..) => Ok(Value::Int(const_int(e, params, &vec![])?)),
+        ExprKind::Int(_) | ExprKind::Neg(_) | ExprKind::Bin(..) => {
+            Ok(Value::Int(const_int(e, params, &vec![])?))
+        }
         ExprKind::Bool(b) => Ok(Value::Bool(*b)),
         ExprKind::Name(n) => {
             if w.consts.contains_key(n) {
@@ -639,7 +1092,12 @@ pub fn const_value(w: &World, e: &E, params: &HashMap<String, i64>, _ty: &Ty) ->
                 Err((e.span.line, format!("'{}' is not a constant", n)))
             }
         }
-        ExprKind::Tuple(xs) => Ok(Value::Tuple(xs.iter().map(|x| const_value(w, x, params, &Ty::Int)).collect::<CResult<Vec<_>>>()?.into())),
+        ExprKind::Tuple(xs) => Ok(Value::Tuple(
+            xs.iter()
+                .map(|x| const_value(w, x, params, &Ty::Int))
+                .collect::<CResult<Vec<_>>>()?
+                .into(),
+        )),
         _ => Err((e.span.line, "expected a constant".into())),
     }
 }
@@ -718,7 +1176,13 @@ fn compute_relevance(prog: &mut Program, raw: &[Vec<Decl>]) {
 
 fn collect_decl_exprs(d: &Decl, out: &mut Vec<E>, honest_written: &mut bool) {
     match d {
-        Decl::Action { name, needs, effects, seen_by, .. } => {
+        Decl::Action {
+            name,
+            needs,
+            effects,
+            seen_by,
+            ..
+        } => {
             if name == "tell" || name == "announce" {
                 return;
             }
@@ -730,7 +1194,12 @@ fn collect_decl_exprs(d: &Decl, out: &mut Vec<E>, honest_written: &mut bool) {
                 seen_exprs(s, out);
             }
         }
-        Decl::Rule { when, then, trigger, .. } => {
+        Decl::Rule {
+            when,
+            then,
+            trigger,
+            ..
+        } => {
             if let Some(w) = when {
                 out.push(w.clone());
             }
@@ -761,7 +1230,19 @@ fn collect_decl_exprs(d: &Decl, out: &mut Vec<E>, honest_written: &mut bool) {
                                 *honest_written = true;
                             }
                         }
+                        EventClause::Wants { formula, .. } => out.push(formula.clone()),
+                        EventClause::Suspects(c) => {
+                            out.push(c.formula.clone());
+                            if let Some(b) = &c.because {
+                                out.push(b.clone());
+                            }
+                        }
+                        EventClause::Forgets { what, .. } => out.push(what.clone()),
+                        EventClause::Watches { what, .. } => out.push(what.clone()),
                     }
+                }
+                if let Some(p) = &ev.purpose {
+                    out.push(p.clone());
                 }
             }
         }
@@ -797,7 +1278,11 @@ fn collect_reads(e: &E, out: &mut Vec<(String, Option<Vec<E>>)>) {
             collect_reads(b, out);
         }
         ExprKind::Quant { body, .. } | ExprKind::Common { body, .. } => collect_reads(body, out),
-        ExprKind::Epistemic { agent, body, .. } | ExprKind::Deducible { agent, body } | ExprKind::Possible { agent, body } => {
+        ExprKind::Epistemic { agent, body, .. }
+        | ExprKind::Deducible { agent, body }
+        | ExprKind::Possible { agent, body }
+        | ExprKind::Wants { agent, body }
+        | ExprKind::Suspects { agent, body } => {
             collect_reads(agent, out);
             collect_reads(body, out);
         }

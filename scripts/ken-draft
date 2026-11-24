@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Draft a Ken model from prose with Claude Code, then check it and let Claude fix
+# what the checker reports.
+#   usage: scripts/ken-draft STORY.txt OUT.ken [ROUNDS]
+set -euo pipefail
+
+story=${1:?usage: ken-draft STORY.txt OUT.ken [ROUNDS]}
+out=${2:?usage: ken-draft STORY.txt OUT.ken [ROUNDS]}
+rounds=${3:-3}
+here=$(cd "$(dirname "$0")" && pwd)
+guide=$(cat "$here/../docs/drafting-guide.md")
+ken=${KEN:-ken}
+
+command -v claude >/dev/null || { echo "ken-draft needs the claude CLI (Claude Code) on PATH" >&2; exit 2; }
+command -v "$ken" >/dev/null || { echo "ken-draft needs ken on PATH (cargo install --path .), or set KEN" >&2; exit 2; }
+
+strip_fences() { sed -e '/^```/d'; }
+
+claude -p < /dev/null "$guide
+
+Here is the story. Write the .ken file for it.
+
+$(cat "$story")" | strip_fences > "$out"
+
+for ((i = 1; i <= rounds; i++)); do
+  if report=$("$ken" check --quiet "$out" 2>&1); then
+    echo "$report"
+    echo "ken-draft: $out checks cleanly (round $i)"
+    exit 0
+  fi
+  echo "ken-draft: round $i, fixing:" >&2
+  echo "$report" | head -20 >&2
+  claude -p < /dev/null "$guide
+
+This .ken file was drafted from the story below, and the Ken checker reports problems.
+Fix the file so it checks cleanly. Keep what the story says; do not delete expectations
+just to silence them unless they misstate the story. Output only the corrected file.
+
+Story:
+$(cat "$story")
+
+File:
+$(cat "$out")
+
+Checker report:
+$report" | strip_fences > "$out.next"
+  mv "$out.next" "$out"
+done
+"$ken" check "$out" || true
+echo "ken-draft: still has problems after $rounds rounds; see above" >&2
+exit 1

@@ -1,0 +1,18 @@
+# expect-ok
+# One view shared by several observers.
+agent Ann, Bob, Cat
+fact fire: bool
+fact door: bool
+action shout(x: Agent)
+  seen by: everyone
+timeline:
+  start:
+    fire = true
+    door = false
+    seen by: Cat
+    seen by: (Ann, Bob) hiding fire hiding door
+  e1: shout(Cat)
+expect at e1:
+  not (Ann knows whether fire)
+  not (Bob knows whether door)
+  Cat knows fire

@@ -1,0 +1,2 @@
+use "cycle_a.ken"
+fact b: bool = true

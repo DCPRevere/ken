@@ -1,0 +1,10 @@
+# expect-error: can't be nested inside someone's beliefs yet
+agent A, B
+action wave(x: Agent)
+  seen by: x, B
+timeline:
+  start:
+    seen by: everyone
+  e1: wave(A)
+expect at e1:
+  A knows (B saw e1)
